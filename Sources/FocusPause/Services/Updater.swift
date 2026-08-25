@@ -30,7 +30,8 @@ enum UpdateStatus {
 enum Updater {
     // Update source is Gitee — GitHub is slow/unreliable for users in mainland China.
     static let repoOwner = "xiaohe529"
-    static let repoName = "focus-pause"
+    // 仓库实际拼写：FocusPause（Gitee 仓库名对大小写敏感，必须与实际创建的大小写一致）
+    static let repoName = "FocusPause"
     static let apiURL = "https://gitee.com/api/v5/repos/\(repoOwner)/\(repoName)/releases"
     static let releasePageURL = "https://gitee.com/\(repoOwner)/\(repoName)/releases"
 

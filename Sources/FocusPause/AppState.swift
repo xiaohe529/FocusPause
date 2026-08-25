@@ -1055,37 +1055,30 @@ class AppState: ObservableObject {
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "未屏蔽提醒",
             icon: "bell",
-            section1Title: "开启屏蔽并专注",
-            message: "您已经 \(reminderIntervalMinutes) 分钟没开启屏蔽了。选个时长，一键开启屏蔽并开始专注计时。",
-            presets: [("25 分钟", 25), ("30 分钟", 30), ("60 分钟", 60)],
+            section1Title: "延时屏蔽计时",
+            message: "您已经 \(reminderIntervalMinutes) 分钟没开启屏蔽了。可立即屏蔽，或设一个时长延时屏蔽，到点自动开启。",
+            presets: [("5 分钟", 5), ("10 分钟", 10), ("30 分钟", 30)],
             showGoal: true,
-            goalPlaceholder: "这次想专注完成什么？",
+            goalPlaceholder: "这段时间想做什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
-            primaryTitle: "开启并专注",
-            secondaryTitle: "稍后提醒"
+            primaryTitle: "延时屏蔽计时",
+            secondaryTitle: "立即屏蔽",
+            tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
         case .preset(let minutes):
-            enableBlockingAndFocus(minutes: minutes, goal: result.goal)
+            startDelayedBlock(minutes: minutes, goal: result.goal)
         case .custom(let minutes) where minutes > 0:
-            enableBlockingAndFocus(minutes: minutes, goal: result.goal)
+            startDelayedBlock(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
+        case .secondary:
+            Task { await enableBlocking() }   // 立即屏蔽
         case .pause:
             openPractice(.breathing)
         default:
             break   // 稍后提醒 → 循环继续，间隔后再次提醒
-        }
-    }
-
-    /// 开启屏蔽后立即开始一段定时专注（供「未屏蔽提醒」弹窗使用）。
-    /// 若开启屏蔽被用户取消或失败，则不启动计时。
-    private func enableBlockingAndFocus(minutes: Int, goal: String) {
-        Task {
-            await enableBlocking()
-            guard blockingEnabled else { return }
-            startFocusTimer(minutes: minutes, goal: goal)
         }
     }
 

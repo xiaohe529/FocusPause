@@ -23,7 +23,7 @@ FocusPause 是一个 macOS 桌面应用，帮助你在需要专注时屏蔽网�
 
 ### macOS 14+（Apple Silicon 和 Intel 通用）
 
-1. 从 [GitHub Releases](https://github.com/xiaohe529/FocusPause/releases) 或 [Gitee Releases](https://gitee.com/xiaohe529/focus-pause/releases) 下载 `FocusPause-v*.dmg`
+1. 从 [GitHub Releases](https://github.com/xiaohe529/FocusPause/releases) 或 [Gitee Releases](https://gitee.com/xiaohe529/FocusPause/releases) 下载 `FocusPause-v*.dmg`
 2. **双击 DMG 文件**，会弹出一个窗口，左边是 FocusPause 图标，右边是 Applications 文件夹
 3. **把 FocusPause 拖入 Applications 文件夹**（等于是复制到应用程序目录）
 4. 拖完后可以**右键点击 DMG 图标 → 推出**，卸载 DMG
@@ -47,7 +47,7 @@ FocusPause 是一个 macOS 桌面应用，帮助你在需要专注时屏蔽网�
 ```bash
 git clone https://github.com/xiaohe529/FocusPause.git
 # 或国内镜像
-git clone https://gitee.com/xiaohe529/focus-pause.git
+git clone https://gitee.com/xiaohe529/FocusPause.git
 cd FocusPause
 ./build-app.sh          # Debug 版
 # 或
