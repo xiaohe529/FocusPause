@@ -1,0 +1,19 @@
+# Swift / Xcode
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+*.swiftpm/
+
+# macOS
+.DS_Store
+*.dmg
+*.zip
+
+# Secrets & tokens
+*.token
+*.secret
+.env
+
+# root-level dev/debug artifacts
+/_*
