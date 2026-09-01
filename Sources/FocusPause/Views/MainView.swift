@@ -10,8 +10,11 @@ struct MainView: View {
     @State private var passwordError = false
     @State private var emergencyPasswordInput = ""
     @State private var emergencyPasswordError = false
+    @State private var scheduledExitPasswordInput = ""
+    @State private var scheduledExitPasswordError = false
     @FocusState private var unlockFocus: UnlockField?
     @FocusState private var emergencyFocus: Bool
+    @FocusState private var scheduledExitFocus: Bool
 
     let tabLabels = ["屏蔽吧！", "计时模式", "暂停一下"]
     let tabIcons = ["shield", "timer", "pause.circle"]
@@ -55,7 +58,7 @@ struct MainView: View {
                     color: .focusActive,
                     actionTitle: "紧急退出",
                     actionColor: .focusDanger,
-                    actionDisabled: state.emergencyUsesThisMonth >= AppState.monthlyEmergencyQuota,
+                    actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota,
                     action: { state.showEmergencyOverrideSheet = true }
                 ) {
                     TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -63,6 +66,31 @@ struct MainView: View {
                             .font(.subheadline)
                             .monospacedDigit()
                     }
+                }
+            } else if state.isScheduledLockActive {
+                statusBanner(
+                    icon: "calendar.badge.clock",
+                    color: .focusAccent,
+                    actionTitle: "紧急退出",
+                    actionColor: .focusDanger,
+                    actionDisabled: state.scheduledExitUsesThisMonth >= state.scheduledExitQuota,
+                    action: { state.showScheduledExitSheet = true }
+                ) {
+                    Text("定时屏蔽中 · 本月紧急退出剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth))/\(state.scheduledExitQuota)")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                }
+            } else if state.delayedBlockPendingAuth {
+                statusBanner(
+                    icon: "exclamationmark.triangle.fill",
+                    color: .focusDanger,
+                    actionTitle: "去授权",
+                    actionColor: .focusDanger,
+                    actionDisabled: false,
+                    action: { state.selectedTab = 1 }
+                ) {
+                    Text("屏蔽未生效 · 到点未授权")
+                        .font(.subheadline)
                 }
             } else if state.delayedBlockActive {
                 statusBanner(
@@ -79,17 +107,18 @@ struct MainView: View {
                             .monospacedDigit()
                     }
                 }
-            } else if state.delayedBlockPendingAuth {
+            } else if !state.scheduledWindows.isEmpty {
                 statusBanner(
-                    icon: "exclamationmark.triangle.fill",
-                    color: .focusDanger,
-                    actionTitle: "去授权",
-                    actionColor: .focusDanger,
+                    icon: "calendar.badge.exclamationmark",
+                    color: .focusAccent,
+                    actionTitle: nil,
+                    actionColor: nil,
                     actionDisabled: false,
-                    action: { state.selectedTab = 1 }
+                    action: {}
                 ) {
-                    Text("屏蔽未生效 · 到点未授权")
+                    Text("已设定 \(state.scheduledWindows.filter(\.enabled).count)/\(state.scheduledWindows.count) 段定时屏蔽")
                         .font(.subheadline)
+                        .monospacedDigit()
                 }
             }
 
@@ -198,7 +227,7 @@ struct MainView: View {
                 VStack(spacing: 16) {
                     Text("紧急退出专注计时")
                         .font(.headline)
-                    Text("本月已用 \(state.emergencyUsesThisMonth) / \(AppState.monthlyEmergencyQuota) 次")
+                    Text("本月已用 \(state.emergencyUsesThisMonth) / \(state.emergencyQuota) 次")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     SecureField("输入密码", text: $emergencyPasswordInput)
@@ -227,6 +256,42 @@ struct MainView: View {
                     DispatchQueue.main.async { emergencyFocus = true }
                 }
             }
+        .sheet(isPresented: $state.showScheduledExitSheet, onDismiss: {
+                scheduledExitPasswordInput = ""
+                scheduledExitPasswordError = false
+            }) {
+                VStack(spacing: 16) {
+                    Text("紧急退出定时屏蔽")
+                        .font(.headline)
+                    Text("本月已用 \(state.scheduledExitUsesThisMonth) / \(state.scheduledExitQuota) 次（与专注计时独立）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    SecureField("输入密码", text: $scheduledExitPasswordInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                        .focused($scheduledExitFocus)
+                        .onSubmit { confirmScheduledExit() }
+                    if scheduledExitPasswordError {
+                        Text(state.lastError ?? "密码错误")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                    HStack(spacing: 16) {
+                        Button("取消") {
+                            state.showScheduledExitSheet = false
+                            scheduledExitPasswordInput = ""
+                            scheduledExitPasswordError = false
+                        }
+                        Button("确认") { confirmScheduledExit() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding()
+                .frame(width: 320, height: 240)
+                .onAppear {
+                    DispatchQueue.main.async { scheduledExitFocus = true }
+                }
+            }
         .alert("冷静期内无法解除屏蔽", isPresented: $state.showCooldownAlert) {
             Button("知道了", role: .cancel) {}
         } message: {
@@ -244,6 +309,17 @@ struct MainView: View {
             emergencyPasswordError = false
         } else {
             emergencyPasswordError = true
+        }
+    }
+
+    private func confirmScheduledExit() {
+        let ok = state.scheduledBlockEmergencyExit(password: scheduledExitPasswordInput)
+        if ok {
+            state.showScheduledExitSheet = false
+            scheduledExitPasswordInput = ""
+            scheduledExitPasswordError = false
+        } else {
+            scheduledExitPasswordError = true
         }
     }
 
@@ -367,6 +443,7 @@ private func remainingString(end: Date?) -> String {
     let secs = remaining % 60
     return String(format: "%02d:%02d", mins, secs)
 }
+
 
 private func coolDownString(_ remaining: TimeInterval) -> String {
     let total = Int(remaining)

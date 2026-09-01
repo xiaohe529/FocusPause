@@ -34,6 +34,7 @@ final class GoalOverlayController: NSWindowController {
     /// 悬浮目标窗：标题（专注计时中/延时屏蔽中）+ 可选事件文案 + 可选倒计时。
     /// `goal` 为 nil 时不显示事件；`end` 非 nil 时显示实时倒计时。
     func show(title: String, goal: String?, end: Date?, onClose: (() -> Void)? = nil) {
+        FocusLogger.info("GoalOverlay show — title=\(title) window=\(window != nil)")
         let vc = NSHostingController(rootView: GoalOverlayView(title: title, goal: goal, end: end, onClose: onClose))
         contentViewController = vc
         hostingController = vc

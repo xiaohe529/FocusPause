@@ -9,6 +9,9 @@ struct BreathingView: View {
     @State private var draftTitle = ""
     @State private var draftURL = ""
     @State private var draftGroupName = ""
+    @State private var draftKind: ToolboxLink.Kind = .link
+    @State private var showAppPicker = false
+    @State private var appChoices: [(name: String, path: String)] = []
     @FocusState private var titleFocus: Bool
     /// 鼠标悬停的条目 id：悬停到该行时才显示其操作按钮，避免满屏图标眼花。
     @State private var hoveringGroupID: UUID?
@@ -62,7 +65,7 @@ struct BreathingView: View {
             .padding(.bottom, 24)
             .padding()
         }
-        .sheet(item: $editing, onDismiss: { draftTitle = ""; draftURL = "" }) { item in
+        .sheet(item: $editing, onDismiss: { draftTitle = ""; draftURL = ""; draftKind = .link; showAppPicker = false }) { item in
             linkSheet(item)
         }
         .sheet(item: $renamingGroup, onDismiss: { draftGroupName = "" }) { item in
@@ -113,15 +116,28 @@ struct BreathingView: View {
         .focusCard()
     }
 
-    /// 单个链接小卡片：文案与操作按钮同行。两列网格里的一个格子。
+    /// 单个入口小卡片：文案与操作按钮同行。网页外链 / 本机应用。
     private func linkCell(group: ToolboxGroup, link: ToolboxLink) -> some View {
         HStack(spacing: 8) {
-            Link(destination: URL(string: link.url) ?? URL(string: "https://")!) {
-                Label(link.title, systemImage: "arrow.up.right.square")
-                    .font(.subheadline)
+            if link.kind == .app {
+                Button {
+                    state.openToolboxItem(link)
+                } label: {
+                    Label(link.title, systemImage: "app.badge")
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.focusAccent)
+                .lineLimit(1)
+                .help("启动 \(link.url)")
+            } else {
+                Link(destination: URL(string: link.url) ?? URL(string: "https://")!) {
+                    Label(link.title, systemImage: "arrow.up.right.square")
+                        .font(.subheadline)
+                }
+                .foregroundStyle(Color.focusAccent)
+                .lineLimit(1)
             }
-            .foregroundStyle(Color.focusAccent)
-            .lineLimit(1)
 
             Spacer(minLength: 8)
 
@@ -146,15 +162,39 @@ struct BreathingView: View {
 
     private func linkSheet(_ item: EditTarget) -> some View {
         VStack(spacing: 16) {
-            Text(item.linkID == nil ? "新增链接" : "编辑链接")
+            Text(item.linkID == nil ? "新增条目" : "编辑条目")
                 .font(.headline)
-            TextField("文案（如：去暂停工具箱）", text: $draftTitle)
+
+            Picker("类型", selection: $draftKind) {
+                Text("网站链接").tag(ToolboxLink.Kind.link)
+                Text("本机应用").tag(ToolboxLink.Kind.app)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 220)
+
+            TextField("名称（如：去暂停工具箱 / 日历）", text: $draftTitle)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .focused($titleFocus)
-            TextField("链接地址", text: $draftURL)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
+
+            if draftKind == .app {
+                TextField("应用路径（如 /Applications/…/….app）", text: $draftURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+                Button {
+                    showAppPicker = true
+                } label: {
+                    Label("从已安装 App 中选择", systemImage: "list.bullet")
+                        .font(.subheadline)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                .fixedSize()
+            } else {
+                TextField("链接地址", text: $draftURL)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+            }
+
             HStack(spacing: 16) {
                 Button("取消") { editing = nil }
                 if item.linkID != nil {
@@ -172,17 +212,84 @@ struct BreathingView: View {
             }
         }
         .padding()
-        .frame(width: 340)
+        .frame(width: 360)
         .onAppear {
             DispatchQueue.main.async { titleFocus = true }
+        }
+        // 挂在编辑 sheet 内部（子 sheet），这样能在当前已弹出的编辑框之上再弹一层。
+        .sheet(isPresented: $showAppPicker, onDismiss: { appChoices = [] }) {
+            appPickerSheet
+        }
+    }
+
+    /// 已安装 App 选择器：多在编辑 sheet 之上展示，内容在出现后异步加载。
+    private var appPickerSheet: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("选择要启动的 App")
+                    .font(.headline)
+                Spacer()
+                Text("\(appChoices.count) 个")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if appChoices.isEmpty {
+                Spacer()
+                ProgressView()
+                Text("正在读取已安装应用…")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 6) {
+                        ForEach(appChoices, id: \.path) { app in
+                            Button {
+                                draftTitle = app.name
+                                draftURL = app.path
+                                showAppPicker = false
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "app.badge")
+                                        .foregroundStyle(Color.focusAccent)
+                                    Text(app.name)
+                                        .foregroundStyle(.primary)
+                                    Text(app.path)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 5)
+                                .padding(.horizontal, 8)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("关闭") { showAppPicker = false }
+            }
+        }
+        .padding()
+        .frame(width: 420, height: 420)
+        .task {
+            // 在 sheet 出现后再去枚举，避免「点一下就弹、第一次因状态未就绪而不出」的问题。
+            if appChoices.isEmpty {
+                appChoices = InstalledApps.installed()
+            }
         }
     }
 
     private func saveLink(_ item: EditTarget) {
         if let linkID = item.linkID {
-            state.updateToolboxLink(linkID: linkID, title: draftTitle, url: draftURL)
+            state.updateToolboxLink(linkID: linkID, title: draftTitle, url: draftURL, kind: draftKind)
         } else {
-            state.addToolboxLink(groupID: item.groupID, title: draftTitle, url: draftURL)
+            state.addToolboxLink(groupID: item.groupID, title: draftTitle, url: draftURL, kind: draftKind)
         }
         editing = nil
     }
@@ -231,12 +338,14 @@ struct BreathingView: View {
     private func beginEditLink(in groupID: UUID, link: ToolboxLink) {
         draftTitle = link.title
         draftURL = link.url
+        draftKind = link.kind
         editing = EditTarget(groupID: groupID, linkID: link.id)
     }
 
     private func beginNewLink(in groupID: UUID) {
         draftTitle = ""
         draftURL = ""
+        draftKind = .link
         editing = EditTarget(groupID: groupID, linkID: nil)
     }
 }

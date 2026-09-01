@@ -1,7 +1,7 @@
 import Foundation
 
 struct FocusTimerState: Codable {
-    enum Kind: String, Codable { case focus, delayedBlock }
+    enum Kind: String, Codable { case focus, delayedBlock, scheduledBlock }
     var kind: Kind?
     var endTimestamp: Date?
     var emergencyUsesThisMonth: Int
@@ -13,4 +13,6 @@ struct FocusTimerState: Codable {
     var delayedBlockGoal: String?
     /// The goal the user set for this focus session, shown in the same floating overlay.
     var focusTimerGoal: String?
+    /// 定时屏蔽「紧急退出」每月已用次数（与专注计时额度互相独立，随 lastResetMonth 重置）。
+    var scheduledExitUsesThisMonth: Int? = nil
 }

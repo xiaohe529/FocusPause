@@ -63,6 +63,39 @@ struct FlowLayout: Layout {
 
 /// 二级子分段：紧凑横排卡片（图标 + 标题），尺寸比一级标签小、间距宽松、
 /// 选中态用靛蓝浅底描边，与一级标签（实心胶囊）明显区分。
+/// 可直接输入任意位数（含个位数）的数值小框：用字符串承载输入，解析后回写。
+/// 避免 `TextField(value:format:)` 在 macOS 上不便输入个位数的问题。
+struct MinuteField: View {
+    let value: Int
+    var width: CGFloat = 35
+    let onChange: (Int) -> Void
+    @State private var text: String
+
+    init(value: Int, width: CGFloat = 35, onChange: @escaping (Int) -> Void) {
+        self.value = value
+        self.width = width
+        self.onChange = onChange
+        _text = State(initialValue: String(value))
+    }
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.center)
+            .monospacedDigit()
+            .frame(width: width)
+            .onChange(of: text) { _, newText in
+                let digits = newText.filter { $0.isNumber }
+                guard let v = Int(digits), v > 0 else { return }
+                onChange(v)
+            }
+            .onChange(of: value) { _, newValue in
+                // 外部（步进器等）变化时同步显示
+                if Int(text) != newValue { text = String(newValue) }
+            }
+    }
+}
+
 /// 行内操作按钮组（编辑 / 上移 / 删除）：默认透明隐藏、不可点，
 /// `revealed` 为 true 时淡入显示。用于列表条目在鼠标悬停时才露出操作按钮。
 struct RowActionButtons: View {

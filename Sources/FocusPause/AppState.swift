@@ -55,6 +55,17 @@ class AppState: ObservableObject {
     @Published var remindBlockingNoFocus = false
     @Published var blockingNoFocusIntervalMinutes = 30
 
+    // 定时屏蔽：多段时间段（每天重复 / 一次性）。
+    @Published var scheduledWindows: [ScheduledWindow] = []
+    /// 已「紧急退出」放弃的具体一次时间段（key=窗口id|yyyy-MM-dd）。紧急退出只解硬锁、屏蔽保持，
+    /// 该标记让本次时间段不再重复加锁，直到下一次开始。
+    @Published var releasedOccurrenceKey: String? = nil
+    /// 定时屏蔽「紧急退出」每月已用次数（与专注计时的紧急退出额度相互独立）。
+    @Published var scheduledExitUsesThisMonth = 0
+    @Published var showScheduledExitSheet = false
+    /// 全拦总开关：开启后任何屏蔽状态都屏蔽全部网站 + App，忽略每条规则的开关。
+    @Published var forceBlockAll = false
+
     // 正念：导航状态（弹窗可编程切页）+ 鼓励语
     enum PauseMode {
         case breathing
@@ -76,6 +87,8 @@ class AppState: ObservableObject {
     private var focusEndReminderInFlight = false
     /// 专注计时结束的「稍后提醒」循环进行中时为 true，让「已屏蔽但未专注」循环让位，避免两个提醒同时弹。
     private var isFocusEndNagging = false
+    /// 定时屏蔽的起止调度任务：start 前等待、到点开启。
+    private var scheduledBlockTask: Task<Void, Never>?
     private var blockingNoFocusTask: Task<Void, Never>?
     private var blockingNoFocusInFlight = false
 
@@ -94,7 +107,48 @@ class AppState: ObservableObject {
     private let goalOverlay = GoalOverlayController()
     private var goalOverlayDismissedByUser = false
 
-    static let monthlyEmergencyQuota = 3
+    /// 专注计时「紧急退出」每月额度（用户可设 1–5，默认 3；每月仅可改一次）。
+    @Published var emergencyQuota = 3
+    /// 定时屏蔽「紧急退出」每月额度（与专注计时独立；用户可设 1–5，默认 3；每月仅可改一次）。
+    @Published var scheduledExitQuota = 3
+    /// 各额度最后一次修改的月份（yyyy-MM），用于「每月仅可改一次」。
+    private var lastEmergencyQuotaSetMonth: String? = nil
+    private var lastScheduledQuotaSetMonth: String? = nil
+
+    var emergencyQuotaLockedThisMonth: Bool { lastEmergencyQuotaSetMonth == Self.currentMonthString() }
+    var scheduledExitQuotaLockedThisMonth: Bool { lastScheduledQuotaSetMonth == Self.currentMonthString() }
+
+    /// 设置专注计时紧急退出额度。本月已设过则拒绝并返回 false。
+    @discardableResult
+    func setEmergencyQuota(_ value: Int) -> Bool {
+        let month = Self.currentMonthString()
+        if lastEmergencyQuotaSetMonth == month {
+            lastError = "本月已设置过专注紧急退出额度，下个月才能再改"
+            return false
+        }
+        emergencyQuota = min(5, max(1, value))
+        lastEmergencyQuotaSetMonth = month
+        UserDefaults.standard.set(emergencyQuota, forKey: "emergencyQuota")
+        UserDefaults.standard.set(month, forKey: "emergencyQuotaSetMonth")
+        FocusLogger.info("Emergency quota set to \(emergencyQuota) for \(month)")
+        return true
+    }
+
+    /// 设置定时屏蔽紧急退出额度。本月已设过则拒绝并返回 false。
+    @discardableResult
+    func setScheduledExitQuota(_ value: Int) -> Bool {
+        let month = Self.currentMonthString()
+        if lastScheduledQuotaSetMonth == month {
+            lastError = "本月已设置过定时屏蔽退出额度，下个月才能再改"
+            return false
+        }
+        scheduledExitQuota = min(5, max(1, value))
+        lastScheduledQuotaSetMonth = month
+        UserDefaults.standard.set(scheduledExitQuota, forKey: "scheduledExitQuota")
+        UserDefaults.standard.set(month, forKey: "scheduledExitQuotaSetMonth")
+        FocusLogger.info("Scheduled-exit quota set to \(scheduledExitQuota) for \(month)")
+        return true
+    }
 
     private var lastResetMonth: String = ""
 
@@ -107,9 +161,75 @@ class AppState: ObservableObject {
         return nil
     }
 
+    // MARK: - 定时屏蔽（多段时间段：每天重复 / 一次性）
+
+    /// 用户已提前退出的那一次时间段标记（key=窗口id|同日起止日）。返回 nil 代表当前不在任何时段。
+    func activeOccurrenceKey(now: Date = Date()) -> String? {
+        activeMatch(now: now)?.key
+    }
+
+    /// 当前正处在屏蔽时间段内的那条窗口（用于锁定该窗口不被编辑）。
+    var activeScheduledWindowID: UUID? {
+        activeMatch()?.window.id
+    }
+
+    private func activeMatch(now: Date = Date()) -> (window: ScheduledWindow, key: String)? {
+        let cal = Calendar.current
+        let c = cal.dateComponents([.hour, .minute], from: now)
+        let minute = (c.hour ?? 0) * 60 + (c.minute ?? 0)
+        for w in scheduledWindows where w.enabled {
+            if w.repeats {
+                if let k = activeKeyForDaily(w, now: now, cal: cal, minute: minute) { return (w, k) }
+            } else if let k = activeKeyForOneTime(w, now: now, cal: cal) { return (w, k) }
+        }
+        return nil
+    }
+
+    /// 每天重复：按当日时间匹配，归属日 = 开始当天（跨午夜时凌晨段归前一天）。
+    private func activeKeyForDaily(_ w: ScheduledWindow, now: Date, cal: Calendar, minute: Int) -> String? {
+        let overnight = w.endMinute < w.startMinute
+        if !overnight {
+            if minute >= w.startMinute && minute < w.endMinute {
+                return Self.occurrenceKey(w, day: cal.startOfDay(for: now))
+            }
+        } else if minute >= w.startMinute {                       // 跨午夜：晚上段
+            return Self.occurrenceKey(w, day: cal.startOfDay(for: now))
+        } else if minute < w.endMinute {                          // 跨午夜：次日凌晨段
+            let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
+            return Self.occurrenceKey(w, day: yesterday)
+        }
+        return nil
+    }
+
+    /// 一次性：只在 anchorDay 那一次开机范围内有效。
+    private func activeKeyForOneTime(_ w: ScheduledWindow, now: Date, cal: Calendar) -> String? {
+        guard let day = w.anchorDay else { return nil }
+        let startMin = cal.startOfDay(for: day)
+        let start = startMin.addingTimeInterval(TimeInterval(w.startMinute * 60))
+        let spanMin = w.endMinute > w.startMinute
+            ? (w.endMinute - w.startMinute)
+            : (24 * 60 + w.endMinute - w.startMinute)
+        let end = start.addingTimeInterval(TimeInterval(spanMin * 60))
+        guard now >= start && now < end else { return nil }
+        return Self.occurrenceKey(w, day: startMin)
+    }
+
+    private static func occurrenceKey(_ w: ScheduledWindow, day: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        return "\(w.id.uuidString)|\(fmt.string(from: day))"
+    }
+
+    /// 是否处于定时屏蔽硬锁内：当前在某段时间段，且该次时间段未被紧急退出放弃。
+    var isScheduledLockActive: Bool {
+        guard let key = activeOccurrenceKey() else { return false }
+        return key != releasedOccurrenceKey
+    }
+
     var activeTimerKind: FocusTimerState.Kind? {
         if focusTimerActive { return .focus }
         if delayedBlockActive { return .delayedBlock }
+        if isScheduledLockActive { return .scheduledBlock }
         return nil
     }
 
@@ -119,6 +239,17 @@ class AppState: ObservableObject {
         if focusTimerActive { return focusTimerGoal }
         if delayedBlockActive { return delayedBlockGoal }
         return nil
+    }
+
+    // MARK: - 有效屏蔽规则（受全拦总开关影响）
+
+    /// 实际用于屏蔽的网站域名：全拦开启时忽略每条规则开关。
+    var effectiveWebsites: [String] {
+        blockRules.filter { $0.type == .website && (forceBlockAll || $0.enabled) }.map { $0.name }
+    }
+    /// 实际用于屏蔽的 App 名称：同上。
+    var effectiveApps: [String] {
+        blockRules.filter { $0.type == .app && (forceBlockAll || $0.enabled) }.map { $0.name }
     }
 
     private var settingsURL: URL {
@@ -148,11 +279,21 @@ class AppState: ObservableObject {
         if let enabled = UserDefaults.standard.object(forKey: "blockingEnabled") as? Bool {
             blockingEnabled = enabled
         }
+        forceBlockAll = UserDefaults.standard.bool(forKey: "forceBlockAll")
+        loadScheduledWindows()
+        if let q = UserDefaults.standard.object(forKey: "emergencyQuota") as? Int {
+            emergencyQuota = min(5, max(1, q))
+        }
+        if let q = UserDefaults.standard.object(forKey: "scheduledExitQuota") as? Int {
+            scheduledExitQuota = min(5, max(1, q))
+        }
+        lastEmergencyQuotaSetMonth = UserDefaults.standard.string(forKey: "emergencyQuotaSetMonth")
+        lastScheduledQuotaSetMonth = UserDefaults.standard.string(forKey: "scheduledExitQuotaSetMonth")
         delayedBlockLockScreen = UserDefaults.standard.bool(forKey: "delayedBlockLockScreen")
         delayedBlockAllowExtension = UserDefaults.standard.object(forKey: "delayedBlockAllowExtension") as? Bool ?? true
         focusOverlayShowsTime = UserDefaults.standard.object(forKey: "focusOverlayShowsTime") as? Bool ?? true
 
-        appBlocker.updateBlockedApps(blockRules.filter { $0.type == .app && $0.enabled }.map { $0.name })
+        appBlocker.updateBlockedApps(effectiveApps)
         appBlocker.setBlockingEnabled(blockingEnabled)
 
         appBlocker.start()
@@ -176,7 +317,7 @@ class AppState: ObservableObject {
                 return
             }
             guard self.blockingEnabled else { return }
-            let domains = self.blockRules.filter { $0.type == .website && $0.enabled }.map { $0.name }
+            let domains = self.effectiveWebsites
             if !domains.isEmpty {
                 FocusLogger.info("Restoring website blocking for \(domains.count) domains")
                 Task {
@@ -270,11 +411,13 @@ class AppState: ObservableObject {
 
         // Monthly reset
         if loaded.lastResetMonth != currentMonth {
-            FocusLogger.info("Month changed \(loaded.lastResetMonth) → \(currentMonth), resetting emergency quota")
+            FocusLogger.info("Month changed \(loaded.lastResetMonth) → \(currentMonth), resetting emergency & scheduled-exit quota")
             loaded.emergencyUsesThisMonth = 0
+            loaded.scheduledExitUsesThisMonth = 0
             loaded.lastResetMonth = currentMonth
         }
         emergencyUsesThisMonth = loaded.emergencyUsesThisMonth
+        scheduledExitUsesThisMonth = loaded.scheduledExitUsesThisMonth ?? 0
         lastResetMonth = loaded.lastResetMonth
 
         // Reset transient timer state — will be repopulated below
@@ -306,6 +449,11 @@ class AppState: ObservableObject {
                     Task { @MainActor in self?.delayedBlockExpired() }
                 }
                 FocusLogger.info("Resumed active delayed-block timer, ends at \(end)")
+            case .scheduledBlock:
+                // 定时屏蔽窗口由 scheduledBlockStart/End 单独恢复并调度（见 load 上文），
+                // 不占用这里的 endTimestamp。
+                FocusLogger.info("Scheduled-block kind persisted (no endTimestamp) — resumed via scheduledBlockStart/End")
+                break
             }
             focusTimerEngine.start(endTimestamp: end)
             refreshGoalOverlay()
@@ -370,19 +518,45 @@ class AppState: ObservableObject {
             lastError = "密码错误"
             return false
         }
-        guard emergencyUsesThisMonth < Self.monthlyEmergencyQuota else {
-            FocusLogger.error("Emergency override failed: quota exhausted (\(emergencyUsesThisMonth)/\(Self.monthlyEmergencyQuota))")
+        guard emergencyUsesThisMonth < emergencyQuota else {
+            FocusLogger.error("Emergency override failed: quota exhausted (\(emergencyUsesThisMonth)/\(emergencyQuota))")
             lastError = "本月紧急退出次数已用完"
             return false
         }
         emergencyUsesThisMonth += 1
-        focusTimerActive = false
-        focusTimerEnd = nil
-        focusTimerGoal = nil
-        focusTimerEngine.stop()
+        // 专注计时：清掉计时（屏蔽本身仍保持）。
+        if focusTimerActive {
+            focusTimerActive = false
+            focusTimerEnd = nil
+            focusTimerGoal = nil
+            focusTimerEngine.stop()
+        }
         saveFocusTimer()
         refreshGoalOverlay()
         FocusLogger.info("Emergency override succeeded, uses this month: \(emergencyUsesThisMonth)")
+        return true
+    }
+
+    /// 定时屏蔽「紧急退出」（密码已在 sheet 验证）：与专注计时额度和互独立。
+    /// 消耗本套月度额度，只解除本次时间段硬锁，屏蔽保持开启。
+    func scheduledBlockEmergencyExit(password: String) -> Bool {
+        guard KeychainPassword.verify(password) else {
+            lastError = "密码错误"
+            return false
+        }
+        guard isScheduledLockActive else {
+            lastError = "当前不在定时屏蔽时间段内"
+            return false
+        }
+        guard scheduledExitUsesThisMonth < scheduledExitQuota else {
+            lastError = "本月定时屏蔽紧急退出次数已用完"
+            FocusLogger.error("Scheduled exit rejected: quota exhausted (\(scheduledExitUsesThisMonth)/\(scheduledExitQuota))")
+            return false
+        }
+        scheduledExitUsesThisMonth += 1
+        releaseScheduledLockViaEmergencyExit()
+        saveFocusTimer()   // 持久化月度额度
+        FocusLogger.info("Scheduled emergency exit used \(scheduledExitUsesThisMonth)/\(scheduledExitQuota)")
         return true
     }
 
@@ -394,13 +568,187 @@ class AppState: ObservableObject {
                                       delayedBlockPendingAuth: delayedBlockPendingAuth,
                                       delayedBlockRetryCount: delayedBlockRetryCount,
                                       delayedBlockGoal: delayedBlockGoal,
-                                      focusTimerGoal: focusTimerGoal)
+                                      focusTimerGoal: focusTimerGoal,
+                                      scheduledExitUsesThisMonth: scheduledExitUsesThisMonth)
         do {
             let data = try JSONEncoder().encode(storage)
             try data.write(to: focusTimerURL)
         } catch {
             FocusLogger.error("saveFocusTimer failed: \(error.localizedDescription)")
             lastError = "保存计时状态失败：\(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - 定时屏蔽（每天重复的多段时间段）
+
+    private let scheduledWindowsKey = "scheduledWindows"
+    private let scheduledReleasedKey = "scheduledReleasedOccurrenceKey"
+
+    func setScheduledWindows(_ windows: [ScheduledWindow]) {
+        scheduledWindows = windows
+        saveScheduledWindows()
+        rescheduleScheduledBlock()
+        refreshGoalOverlay()
+        FocusLogger.info("setScheduledWindows — \(windows.count) windows")
+    }
+
+    func addScheduledWindow(startMinute: Int, endMinute: Int) {
+        var list = scheduledWindows
+        list.append(ScheduledWindow(id: UUID(), startMinute: startMinute, endMinute: endMinute))
+        setScheduledWindows(list)
+    }
+
+    func removeScheduledWindow(id: UUID) {
+        setScheduledWindows(scheduledWindows.filter { $0.id != id })
+    }
+
+    private func saveScheduledWindows() {
+        guard let data = try? JSONEncoder().encode(scheduledWindows) else { return }
+        UserDefaults.standard.set(data, forKey: scheduledWindowsKey)
+    }
+
+    private func loadScheduledWindows() {
+        if let data = UserDefaults.standard.data(forKey: scheduledWindowsKey),
+           let saved = try? JSONDecoder().decode([ScheduledWindow].self, from: data) {
+            scheduledWindows = saved
+        }
+        releasedOccurrenceKey = UserDefaults.standard.string(forKey: scheduledReleasedKey)
+        rescheduleScheduledBlock()
+    }
+
+    private func setReleasedOccurrence(_ key: String?) {
+        releasedOccurrenceKey = key
+        UserDefaults.standard.set(key, forKey: scheduledReleasedKey)
+    }
+
+    /// 定期 tick：进入某时间段时确保屏蔽开启；被放弃的时间段过期后清理标记。
+    private func rescheduleScheduledBlock() {
+        scheduledBlockTask?.cancel()
+        scheduledBlockTask = nil
+        guard !scheduledWindows.isEmpty else { return }
+        scheduledBlockTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                self.tickScheduledBlock()
+                try? await Task.sleep(for: .seconds(10))
+                if Task.isCancelled { return }
+            }
+        }
+    }
+
+    private var lastScheduledOccurrenceKey: String?
+    /// 用户在「定时到点 vs 延时倒计时」冲突时选择了「继续延时到点」的那次时间段 key。
+    /// 该时段内不再反复询问；延时结束/取消后自动补上屏蔽。
+    private var scheduledDeferredKey: String?
+
+    private func tickScheduledBlock() {
+        purgeExpiredOneTimeWindows()
+        let key = activeOccurrenceKey()
+        // 已被放弃的时间段已离开 → 清除标记，让后续新时间段可再次硬锁。
+        if let released = releasedOccurrenceKey, key != released {
+            setReleasedOccurrence(nil)
+        }
+        // 之前选择「继续延时」的时间段，延时已经结束/被取消 → 解除兜底、补上屏蔽（不再问）。
+        if let deferred = scheduledDeferredKey,
+           key == deferred,
+           !delayedBlockActive,
+           key != releasedOccurrenceKey {
+            scheduledDeferredKey = nil
+            if !blockingEnabled {
+                FocusLogger.info("Deferred scheduled window no longer covered by delay — enabling blocking")
+                Task { await enableBlocking() }
+            }
+        }
+        // 进入一个新的、未决定的时间段 → 决定是否开屏蔽。
+        if let key,
+           key != lastScheduledOccurrenceKey,
+           key != releasedOccurrenceKey,
+           key != scheduledDeferredKey {
+            lastScheduledOccurrenceKey = key
+            if delayedBlockActive && !blockingEnabled {
+                scheduledStartConflictPrompt(key: key)   // 有延时倒计时 → 询问用户
+            } else if !blockingEnabled {
+                FocusLogger.info("Scheduled block window entered — enabling blocking")
+                Task { await enableBlocking() }
+            }
+        }
+        if key == nil {
+            lastScheduledOccurrenceKey = nil
+            scheduledDeferredKey = nil
+        }
+    }
+
+    /// 定时屏蔽到点且正有延时倒计时：询问是「立即屏蔽」还是「继续延时到点」。
+    private func scheduledStartConflictPrompt(key: String) {
+        FocusLogger.info("Scheduled block start while delayed-block counting — asking user")
+        let result = PromptPanelPresenter.run(PromptPanelConfig(
+            title: "定时屏蔽到点",
+            icon: "calendar.badge.clock",
+            section1Title: "定时屏蔽已开始",
+            message: "你设的定时屏蔽开始了，但延时屏蔽还在倒计时（屏蔽尚未开启）。要现在就屏蔽，还是先继续延时浏览到点？",
+            actionItems: actionPrompts,
+            textItems: textPrompts,
+            primaryTitle: "立即屏蔽",
+            secondaryTitle: "继续延时到点"
+        ))
+        switch result.choice {
+        case .primary:
+            // 立即屏蔽：取消延时、立刻开启屏蔽（定时硬锁接管）。
+            cancelDelayedBlock()
+            Task { await enableBlocking() }
+        default:
+            // 继续延时到点 / 关闭：保守处理，先不打断延时；该时段不再反复问。
+            scheduledDeferredKey = key
+        }
+    }
+
+    /// 清理已结束的一次性时间段（避免残留、也不再匹配）。
+    private func purgeExpiredOneTimeWindows() {
+        let now = Date()
+        let cal = Calendar.current
+        let expired = scheduledWindows.filter { w in
+            guard !w.repeats, let day = w.anchorDay else { return false }
+            let startMin = cal.startOfDay(for: day)
+            let spanMin = w.endMinute > w.startMinute
+                ? (w.endMinute - w.startMinute)
+                : (24 * 60 + w.endMinute - w.startMinute)
+            return now >= startMin.addingTimeInterval(TimeInterval((w.startMinute + spanMin) * 60))
+        }
+        if !expired.isEmpty {
+            let keep = scheduledWindows.filter { w in !expired.contains(where: { $0.id == w.id }) }
+            FocusLogger.info("purging \(expired.count) expired one-time scheduled windows")
+            setScheduledWindows(keep)
+        }
+    }
+
+    /// 紧急退出定时屏蔽（密码已在 sheet 验证）：**只**解除本次时间段硬锁（标记放弃），屏蔽保持开启。
+    func releaseScheduledLockViaEmergencyExit() {
+        guard let key = activeOccurrenceKey() else { return }
+        setReleasedOccurrence(key)
+        FocusLogger.info("Scheduled block early exit — released occurrence \(key), blocking persists")
+    }
+
+    /// 全拦总开关：开启后所有屏蔽状态都屏蔽全部网站 + App。
+    func setForceBlockAll(_ on: Bool) {
+        forceBlockAll = on
+        UserDefaults.standard.set(on, forKey: "forceBlockAll")
+        // 若正在屏蔽，重写一遍 hosts + 更新 app 名单，让全拦立即生效。
+        if blockingEnabled {
+            Task {
+                let wasEnabled = blockingEnabled
+                isProcessing = true
+                do {
+                    try await HostsBlocker.apply(domains: effectiveWebsites)
+                } catch {
+                    lastError = "更新全拦规则失败：\(error.localizedDescription)"
+                }
+                appBlocker.updateBlockedApps(effectiveApps)
+                isProcessing = false
+                _ = await save()
+                if wasEnabled { onBlockingStateChanged?() }
+            }
+        } else {
+            FocusLogger.info("setForceBlockAll(\(on)) — blocking off, applied on next enable")
         }
     }
 
@@ -434,7 +782,9 @@ class AppState: ObservableObject {
     /// 事件可选、倒计时可选（专注计时是否显示时间由设置控制）。
     /// 尊重用户对当前会话的一次性关闭。
     private func refreshGoalOverlay() {
-        guard (focusTimerActive || delayedBlockActive), !goalOverlayDismissedByUser else {
+        let shouldShow = (focusTimerActive || delayedBlockActive) && !goalOverlayDismissedByUser
+        FocusLogger.info("refreshGoalOverlay — focus\(focusTimerActive) delayed\(delayedBlockActive) dismissed\(goalOverlayDismissedByUser) → \(shouldShow ? "show" : "hide")")
+        guard shouldShow else {
             goalOverlay.hide()
             return
         }
@@ -694,11 +1044,11 @@ class AppState: ObservableObject {
         UserDefaults.standard.set(blockingEnabled, forKey: "blockingEnabled")
         UserDefaults.standard.set(launchAtLogin, forKey: "launchAtLogin")
 
-        appBlocker.updateBlockedApps(blockRules.filter { $0.type == .app && $0.enabled }.map { $0.name })
+        appBlocker.updateBlockedApps(effectiveApps)
         appBlocker.setBlockingEnabled(blockingEnabled)
 
         if blockingEnabled && helperInstalled {
-            let domains = blockRules.filter { $0.type == .website && $0.enabled }.map { $0.name }
+            let domains = effectiveWebsites
             do {
                 if domains.isEmpty {
                     try await HostsBlocker.clear()
@@ -778,10 +1128,10 @@ class AppState: ObservableObject {
             }
         }
 
-        FocusLogger.info("enableBlocking — websites=\(blockRules.filter { $0.type == .website && $0.enabled }.count), apps=\(blockRules.filter { $0.type == .app && $0.enabled }.count)")
+        FocusLogger.info("enableBlocking — websites=\(effectiveWebsites.count), apps=\(effectiveApps.count), forceBlockAll=\(forceBlockAll)")
         isProcessing = true
         onBlockingStateChanged?()
-        let domains = blockRules.filter { $0.type == .website && $0.enabled }.map { $0.name }
+        let domains = effectiveWebsites
         if !domains.isEmpty {
             do {
                 try await HostsBlocker.apply(domains: domains)
@@ -837,6 +1187,10 @@ class AppState: ObservableObject {
             lastError = "冷静期内无法解除屏蔽，剩余 \(Int(coolDownRemaining) / 60) 分 \(Int(coolDownRemaining) % 60) 秒"
             return
         }
+        guard !isScheduledLockActive else {
+            lastError = "定时屏蔽中，请先结束定时屏蔽（密码）或等到点解除硬锁"
+            return
+        }
         FocusLogger.info("disableBlocking")
         isProcessing = true
         onBlockingStateChanged?()
@@ -865,6 +1219,11 @@ class AppState: ObservableObject {
     func toggleBlocking() {
         guard coolDownRemaining <= 0 else {
             showCooldownAlert = true
+            return
+        }
+        // 定时屏蔽硬锁窗口内：点停止 → 只提示，退出需到「计时模式 → 定时屏蔽」页走紧急退出。
+        if isScheduledLockActive {
+            lastError = "定时屏蔽中，请在「计时模式 → 定时屏蔽」页面使用紧急退出"
             return
         }
         guard !isLocked else {
@@ -943,6 +1302,7 @@ class AppState: ObservableObject {
         appBlocker.stop()
         focusTimerEngine.stop()
         cooldownTask?.cancel()
+        scheduledBlockTask?.cancel()
         stopFocusEndReminder()
         stopPendingAlertLoop()
         stopReminderLoop()
@@ -1504,24 +1864,48 @@ class AppState: ObservableObject {
         saveToolboxGroups()
     }
 
-    func addToolboxLink(groupID: UUID, title: String, url: String) {
+    func addToolboxLink(groupID: UUID, title: String, url: String, kind: ToolboxLink.Kind = .link) {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let u = normalizedURL(url)
+        let u = normalizeToolboxURL(url, kind: kind)
         guard !t.isEmpty, !u.isEmpty,
               let index = toolboxGroups.firstIndex(where: { $0.id == groupID }) else { return }
-        toolboxGroups[index].links.append(ToolboxLink(title: t, url: u))
+        toolboxGroups[index].links.append(ToolboxLink(title: t, url: u, kind: kind))
         saveToolboxGroups()
     }
 
-    func updateToolboxLink(linkID: UUID, title: String, url: String) {
+    func updateToolboxLink(linkID: UUID, title: String, url: String, kind: ToolboxLink.Kind = .link) {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let u = normalizedURL(url)
+        let u = normalizeToolboxURL(url, kind: kind)
         guard !t.isEmpty, !u.isEmpty,
               let gIndex = toolboxGroups.firstIndex(where: { $0.links.contains { $0.id == linkID } }),
               let lIndex = toolboxGroups[gIndex].links.firstIndex(where: { $0.id == linkID }) else { return }
         toolboxGroups[gIndex].links[lIndex].title = t
         toolboxGroups[gIndex].links[lIndex].url = u
+        toolboxGroups[gIndex].links[lIndex].kind = kind
         saveToolboxGroups()
+    }
+
+    /// 外链补 https:// 前缀；本机应用路径原样保留（不补 scheme）。
+    private func normalizeToolboxURL(_ url: String, kind: ToolboxLink.Kind) -> String {
+        let clean = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard kind == .link else { return clean }
+        return normalizedURL(clean)
+    }
+
+    /// 打开一条工具箱项：网页外链走浏览器，本机应用用 NSWorkspace 启动。
+    func openToolboxItem(_ link: ToolboxLink) {
+        switch link.kind {
+        case .link:
+            if let u = URL(string: link.url) {
+                NSWorkspace.shared.open(u)
+            }
+        case .app:
+            guard FileManager.default.fileExists(atPath: link.url) else {
+                lastError = "找不到应用「\(link.title)」（\(link.url)）"
+                return
+            }
+            NSWorkspace.shared.open(URL(fileURLWithPath: link.url))
+        }
     }
 
     func deleteToolboxLink(groupID: UUID, linkID: UUID) {
@@ -1599,6 +1983,33 @@ class AppState: ObservableObject {
                             url: "https://ebp.gesedna.com/pa-toolbox-recharge-mindfulnessbreath-listen/?rd=%2Fpa-recharge%2F%2F%3Frd%3D%2Fpa-pause-tool"),
             ]),
         ]
+    }
+}
+
+/// 枚举本机已安装的 `.app`（名字 + 绝对路径），供工具箱选「本机应用」。
+enum InstalledApps {
+    static func installed() -> [(name: String, path: String)] {
+        let fm = FileManager.default
+        let dirs = [
+            "/Applications",
+            "/System/Applications",
+            fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path
+        ]
+        var result: [(name: String, path: String)] = []
+        for dir in dirs {
+            guard let items = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for item in items where item.hasSuffix(".app") {
+                let full = "\(dir)/\(item)"
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: full, isDirectory: &isDir), isDir.boolValue else { continue }
+                let name = String(item.dropLast(4))
+                if name == "FocusPause" || name == "Focus&Pause" { continue }   // 排除自身
+                result.append((name, full))
+            }
+        }
+        var seen = Set<String>()
+        return result.filter { seen.insert($0.path).inserted }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }
 

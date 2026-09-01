@@ -5,6 +5,22 @@ struct SettingsView: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
 
+    /// 未屏蔽提醒间隔（可直接输入）。
+    private var reminderIntervalBinding: Binding<Int> {
+        Binding(get: { state.reminderIntervalMinutes },
+                set: { state.setReminderInterval(minutes: $0) })
+    }
+    /// 屏蔽中未专注提醒间隔（可直接输入）。
+    private var blockingNoFocusIntervalBinding: Binding<Int> {
+        Binding(get: { state.blockingNoFocusIntervalMinutes },
+                set: { state.setBlockingNoFocusInterval(minutes: $0) })
+    }
+    /// 冷静期时长（可直接输入）。
+    private var coolingMinutesBinding: Binding<Int> {
+        Binding(get: { state.coolingMinutes },
+                set: { state.setCoolingMinutes($0) })
+    }
+
     @State private var showPasswordSheet = false
     @State private var oldPassword = ""
     @State private var newPassword = ""
@@ -38,11 +54,11 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     generalSection
                     Divider().padding(.horizontal, -16)
-                    delayedBlockSection
-                    Divider().padding(.horizontal, -16)
                     reminderSection
                     Divider().padding(.horizontal, -16)
                     coolingSection
+                    Divider().padding(.horizontal, -16)
+                    emergencyQuotaSection
                     Divider().padding(.horizontal, -16)
                     reminderAfterBlockSection
                     Divider().padding(.horizontal, -16)
@@ -58,6 +74,12 @@ struct SettingsView: View {
             footer
         }
         .frame(width: 500, height: 580)
+        .onAppear {
+            // 打开设置时不要自动把焦点落进任何输入框。
+            DispatchQueue.main.async {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            }
+        }
         .sheet(isPresented: $showPasswordSheet, onDismiss: resetPasswordFields) {
             passwordSheet
         }
@@ -147,48 +169,6 @@ struct SettingsView: View {
 
     // MARK: - 延时屏蔽
 
-    private var delayedBlockSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionHeader("延时屏蔽")
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: Binding(
-                    get: { state.delayedBlockLockScreen },
-                    set: { newValue in
-                        state.delayedBlockLockScreen = newValue
-                        UserDefaults.standard.set(newValue, forKey: "delayedBlockLockScreen")
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("到期后锁屏")
-                            .font(.subheadline)
-                        Text("延时屏蔽结束后自动锁定屏幕")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-
-                Toggle(isOn: Binding(
-                    get: { state.delayedBlockAllowExtension },
-                    set: {
-                        state.delayedBlockAllowExtension = $0
-                        UserDefaults.standard.set($0, forKey: "delayedBlockAllowExtension")
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("允许延长")
-                            .font(.subheadline)
-                        Text("到期时提供「再等 5/10 分钟」选项，最多 1 次")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-            }
-            .focusCard()
-        }
-    }
-
     // MARK: - 定时提醒
 
     private var reminderSection: some View {
@@ -214,17 +194,14 @@ struct SettingsView: View {
                         Text("提醒间隔")
                             .font(.subheadline)
                         Spacer()
-                        Stepper(value: Binding(
-                            get: { state.reminderIntervalMinutes },
-                            set: { state.setReminderInterval(minutes: $0) }
-                        ), in: 1...240, step: 5) {
-                            Text("\(state.reminderIntervalMinutes) 分钟")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .frame(minWidth: 60, alignment: .trailing)
-                        }
+                        MinuteField(value: state.reminderIntervalMinutes) { state.setReminderInterval(minutes: $0) }
+                        Text("分钟")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Stepper("", value: reminderIntervalBinding, in: 1...240, step: 5)
+                            .labelsHidden()
                     }
-                    Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒。")
+                    Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒；可直接输入数值。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -250,15 +227,12 @@ struct SettingsView: View {
                         Text("提醒间隔")
                             .font(.subheadline)
                         Spacer()
-                        Stepper(value: Binding(
-                            get: { state.blockingNoFocusIntervalMinutes },
-                            set: { state.setBlockingNoFocusInterval(minutes: $0) }
-                        ), in: 5...240, step: 5) {
-                            Text("\(state.blockingNoFocusIntervalMinutes) 分钟")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .frame(minWidth: 60, alignment: .trailing)
-                        }
+                        MinuteField(value: state.blockingNoFocusIntervalMinutes) { state.setBlockingNoFocusInterval(minutes: $0) }
+                        Text("分钟")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Stepper("", value: blockingNoFocusIntervalBinding, in: 5...240, step: 5)
+                            .labelsHidden()
                     }
                     Text("专注计时进行中不提醒；专注计时结束点「稍后提醒」时，也按此间隔再次提醒。")
                         .font(.caption)
@@ -294,15 +268,12 @@ struct SettingsView: View {
                         Text("冷静期时长")
                             .font(.subheadline)
                         Spacer()
-                        Stepper(value: Binding(
-                            get: { state.coolingMinutes },
-                            set: { state.setCoolingMinutes($0) }
-                        ), in: 1...240, step: 5) {
-                            Text("\(state.coolingMinutes) 分钟")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                                .frame(minWidth: 60, alignment: .trailing)
-                        }
+                        MinuteField(value: state.coolingMinutes) { state.setCoolingMinutes($0) }
+                        Text("分钟")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Stepper("", value: coolingMinutesBinding, in: 1...240, step: 5)
+                            .labelsHidden()
                     }
                 }
             }
@@ -349,42 +320,67 @@ struct SettingsView: View {
                     }
                 }
                 .toggleStyle(.switch)
-
-                Toggle(isOn: Binding(
-                    get: { state.remindFocusTimerAfterEnd },
-                    set: {
-                        state.remindFocusTimerAfterEnd = $0
-                        UserDefaults.standard.set($0, forKey: "remindFocusTimerAfterEnd")
-                        if !$0 { state.stopFocusEndReminder() }
-                    }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("专注计时结束后提醒")
-                            .font(.subheadline)
-                        Text("专注计时结束后，是否弹窗开启下一轮计时")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-
-                Divider()
-
-                Toggle(isOn: Binding(
-                    get: { state.focusOverlayShowsTime },
-                    set: { state.setFocusOverlayShowsTime($0) }
-                )) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("专注计时悬浮窗显示时间")
-                            .font(.subheadline)
-                        Text("专注计时或延时屏蔽期间常驻悬浮窗；专注计时时是否显示剩余倒计时由此开关控制")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
             }
             .focusCard()
+        }
+    }
+
+    // MARK: - 紧急退出额度
+
+    private var emergencyQuotaSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("紧急退出额度")
+            Text("专注计时与定时屏蔽各自的「紧急退出」每月次数上限（1–5）。设定后当月锁定，下个月才能再改。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 12) {
+                quotaRow(
+                    title: "专注计时",
+                    value: state.emergencyQuota,
+                    locked: state.emergencyQuotaLockedThisMonth,
+                    set: { state.setEmergencyQuota($0) }
+                )
+                Divider()
+                quotaRow(
+                    title: "定时屏蔽",
+                    value: state.scheduledExitQuota,
+                    locked: state.scheduledExitQuotaLockedThisMonth,
+                    set: { state.setScheduledExitQuota($0) }
+                )
+            }
+            .focusCard()
+        }
+    }
+
+    private func quotaRow(title: String, value: Int, locked: Bool, set: @escaping (Int) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                Spacer()
+                HStack(spacing: 8) {
+                    if locked {
+                        Image(systemName: "lock.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("\(value)")
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .frame(minWidth: 24, alignment: .trailing)
+                    Stepper("", value: Binding(
+                        get: { value },
+                        set: { _ = set($0) }
+                    ), in: 1...5)
+                    .labelsHidden()
+                    .disabled(locked)
+                }
+            }
+            if locked {
+                Text("本月已设置，下个月开放调整")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
