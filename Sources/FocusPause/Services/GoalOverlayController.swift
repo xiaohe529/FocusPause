@@ -19,7 +19,8 @@ final class GoalOverlayController: NSWindowController {
         panel.isFloatingPanel = true
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        // 全局置顶：跨所有空间、可显示在其它 App 之上；不能用 .stationary（会把它钉在当前空间）。
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
@@ -33,9 +34,9 @@ final class GoalOverlayController: NSWindowController {
 
     /// 悬浮目标窗：标题（专注计时中/延时屏蔽中）+ 可选事件文案 + 可选倒计时。
     /// `goal` 为 nil 时不显示事件；`end` 非 nil 时显示实时倒计时。
-    func show(title: String, goal: String?, end: Date?, onClose: (() -> Void)? = nil) {
+    func show(title: String, goal: String?, end: Date?, elapsedStart: Date? = nil, onClose: (() -> Void)? = nil) {
         FocusLogger.info("GoalOverlay show — title=\(title) window=\(window != nil)")
-        let vc = NSHostingController(rootView: GoalOverlayView(title: title, goal: goal, end: end, onClose: onClose))
+        let vc = NSHostingController(rootView: GoalOverlayView(title: title, goal: goal, end: end, elapsedStart: elapsedStart, onClose: onClose))
         contentViewController = vc
         hostingController = vc
 
@@ -57,6 +58,7 @@ struct GoalOverlayView: View {
     let title: String
     let goal: String?
     var end: Date?
+    var elapsedStart: Date?
     var onClose: (() -> Void)?
 
     var body: some View {
@@ -75,6 +77,12 @@ struct GoalOverlayView: View {
                     if let end {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text("剩余 \(countdownString(at: context.date, end: end))")
+                                .font(.caption.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(Color.focusDanger)
+                        }
+                    } else if let elapsedStart {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text("已 \(elapsedString(context.date, start: elapsedStart))")
                                 .font(.caption.monospacedDigit().weight(.semibold))
                                 .foregroundStyle(Color.focusDanger)
                         }
@@ -112,5 +120,14 @@ struct GoalOverlayView: View {
         let mins = remaining / 60
         let secs = remaining % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+
+    private func elapsedString(_ now: Date, start: Date) -> String {
+        let total = max(0, Int(now.timeIntervalSince(start)))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%02d:%02d", m, s)
     }
 }

@@ -53,18 +53,35 @@ struct MainView: View {
 
             // Status banners (low-key, for focus-timer / delayed-block states)
             if state.focusTimerActive {
-                statusBanner(
-                    icon: "lock.fill",
-                    color: .focusActive,
-                    actionTitle: "紧急退出",
-                    actionColor: .focusDanger,
-                    actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota,
-                    action: { state.showEmergencyOverrideSheet = true }
-                ) {
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text("专注计时中 · 剩余 \(remainingString(end: state.focusTimerEnd))")
-                            .font(.subheadline)
-                            .monospacedDigit()
+                if state.isElapsedFocus {
+                    statusBanner(
+                        icon: "lock.fill",
+                        color: .focusActive,
+                        actionTitle: "结束",
+                        actionColor: .focusDanger,
+                        actionDisabled: false,
+                        action: { state.requestEndElapsedFocus() }
+                    ) {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text("正计时中 · 已用时 \(elapsedString(context.date, start: state.focusTimerStart))")
+                                .font(.subheadline)
+                                .monospacedDigit()
+                        }
+                    }
+                } else {
+                    statusBanner(
+                        icon: "lock.fill",
+                        color: .focusActive,
+                        actionTitle: "紧急退出",
+                        actionColor: .focusDanger,
+                        actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota,
+                        action: { state.showEmergencyOverrideSheet = true }
+                    ) {
+                        TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            Text("专注计时中 · 剩余 \(remainingString(end: state.focusTimerEnd))")
+                                .font(.subheadline)
+                                .monospacedDigit()
+                        }
                     }
                 }
             } else if state.isScheduledLockActive {
@@ -434,6 +451,17 @@ struct MainView: View {
         .padding(.horizontal)
         .padding(.top, 8)
     }
+}
+
+/// 正计时已用时（HH:MM:SS）。
+private func elapsedString(_ now: Date, start: Date?) -> String {
+    guard let start else { return "00:00" }
+    let total = max(0, Int(now.timeIntervalSince(start)))
+    let h = total / 3600
+    let m = (total % 3600) / 60
+    let s = total % 60
+    if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+    return String(format: "%02d:%02d", m, s)
 }
 
 private func remainingString(end: Date?) -> String {

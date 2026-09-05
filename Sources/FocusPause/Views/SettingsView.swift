@@ -201,7 +201,7 @@ struct SettingsView: View {
                         Stepper("", value: reminderIntervalBinding, in: 1...240, step: 5)
                             .labelsHidden()
                     }
-                    Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒；可直接输入数值。")
+                    Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒；可直接输入数值。未屏蔽提醒点「稍后提醒」，也按此间隔再次提醒。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -234,7 +234,7 @@ struct SettingsView: View {
                         Stepper("", value: blockingNoFocusIntervalBinding, in: 5...240, step: 5)
                             .labelsHidden()
                     }
-                    Text("专注计时进行中不提醒；专注计时结束点「稍后提醒」时，也按此间隔再次提醒。")
+                    Text("专注计时进行中不提醒；「已屏蔽未专注」「屏蔽已开启」「专注计时结束」等的「稍后提醒」，也按此间隔再次提醒。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

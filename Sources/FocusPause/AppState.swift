@@ -26,6 +26,8 @@ class AppState: ObservableObject {
     @Published var wifiDisabled = false
     @Published var focusTimerActive = false
     @Published var focusTimerEnd: Date? = nil
+    /// 正计时（无结束时间、向上计时）的开始时刻；不为 nil 表示当前是正计时。
+    @Published var focusTimerStart: Date? = nil
     @Published var emergencyUsesThisMonth = 0
     @Published var showEmergencyOverrideSheet = false
     @Published var delayedBlockActive = false
@@ -91,6 +93,22 @@ class AppState: ObservableObject {
     private var scheduledBlockTask: Task<Void, Never>?
     private var blockingNoFocusTask: Task<Void, Never>?
     private var blockingNoFocusInFlight = false
+    /// 「稍后提醒」的一次性 nudge：无论对应提醒开关是否开启，都会在间隔后弹一次。
+    private var reminderNudgeTask: Task<Void, Never>?
+    private var blockingNoFocusNudgeTask: Task<Void, Never>?
+    private var focusEndNudgeTask: Task<Void, Never>?
+    private var focusTimerReminderNudgeTask: Task<Void, Never>?
+    private var delayedBlockNudgeTask: Task<Void, Never>?
+    /// 全局「正在弹提醒弹窗」闸：同一时刻只允许一个提醒弹窗（避免多个提醒同时触发时嵌套排队、背靠背）。
+    private var reminderModalInFlight = false
+
+    /// 尝试占用提醒弹窗闸；已有弹窗在弹则返回 false（调用方直接跳过，不排队）。
+    private func beginReminderModal() -> Bool {
+        guard !reminderModalInFlight else { return false }
+        reminderModalInFlight = true
+        return true
+    }
+    private func endReminderModal() { reminderModalInFlight = false }
 
     /// Remaining cooldown after blocking was enabled; 0 when no cooldown is active.
     var coolDownRemaining: TimeInterval {
@@ -232,6 +250,9 @@ class AppState: ObservableObject {
         if isScheduledLockActive { return .scheduledBlock }
         return nil
     }
+
+    /// 是否处于「正计时」（无结束时间、向上计时）。
+    var isElapsedFocus: Bool { focusTimerStart != nil && focusTimerEnd == nil }
 
     /// The goal for whichever session is currently active (focus timer or
     /// delayed block), shown in the floating always-on-top overlay.
@@ -431,8 +452,17 @@ class AppState: ObservableObject {
         delayedBlockGoal = loaded.delayedBlockGoal
         focusTimerGoal = loaded.focusTimerGoal
 
-        // Resume active timer if end is still in the future
-        if let end = loaded.endTimestamp, end > Date() {
+        // Resume active 正计时（无结束时间、向上计时）
+        if (loaded.kind ?? .focus) == .focus, loaded.endTimestamp == nil, let start = loaded.focusTimerStart {
+            focusTimerStart = start
+            focusTimerActive = true
+            focusTimerGoal = loaded.focusTimerGoal
+            goalOverlayDismissedByUser = false
+            focusTimerEngine.stop()
+            refreshGoalOverlay()
+            FocusLogger.info("Resumed elapsed focus timer, started at \(start)")
+        } else if let end = loaded.endTimestamp, end > Date() {
+            // Resume active (倒计时) timer if end is still in the future
             let kind = loaded.kind ?? .focus
             switch kind {
             case .focus:
@@ -484,7 +514,9 @@ class AppState: ObservableObject {
             lastError = "请先开启屏蔽再启动专注计时"
             return
         }
+        guard focusTimerStart == nil else { return }   // 正计时进行中，不叠计
         let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        cancelAllNudges()
         stopFocusEndReminder()
         focusTimerEnd = end
         focusTimerActive = true
@@ -497,6 +529,54 @@ class AppState: ObservableObject {
         saveFocusTimer()
         refreshGoalOverlay()
         FocusLogger.info("Started focus timer: \(minutes) min, ends at \(end)")
+    }
+
+    /// 开始「正计时」：无结束时间、向上计时。结束需密码且不消耗紧急退出额度。
+    func startFocusTimerElapsed(goal: String? = nil) {
+        guard !delayedBlockActive else {
+            lastError = "延时屏蔽进行中，无法启动专注计时"
+            return
+        }
+        guard blockingEnabled else {
+            lastError = "请先开启屏蔽再启动专注计时"
+            return
+        }
+        guard !focusTimerActive else {
+            lastError = "已有专注计时进行中"
+            return
+        }
+        cancelAllNudges()
+        stopFocusEndReminder()
+        focusTimerEnd = nil
+        focusTimerStart = Date()
+        focusTimerActive = true
+        focusTimerGoal = goal?.isEmpty == true ? nil : goal
+        goalOverlayDismissedByUser = false
+        focusTimerEngine.stop()   // 无到期，不启用引擎
+        saveFocusTimer()
+        refreshGoalOverlay()
+        FocusLogger.info("Started elapsed focus timer")
+    }
+
+    /// 请求结束正计时：设好密码 sheet 待验证（无额度）。
+    func requestEndElapsedFocus() {
+        guard isElapsedFocus else { return }
+        pendingActionLabel = "结束正计时"
+        pendingToggleAction = { [weak self] in self?.endFocusTimerElapsed() }
+        showPasswordSheet = true
+    }
+
+    /// 结束「正计时」（密码已在 sheet 验证）：只清计时、不扣紧急退出额度。
+    func endFocusTimerElapsed() {
+        guard isElapsedFocus else { return }
+        focusTimerActive = false
+        focusTimerStart = nil
+        focusTimerEnd = nil
+        focusTimerGoal = nil
+        focusTimerEngine.stop()
+        saveFocusTimer()
+        refreshGoalOverlay()
+        FocusLogger.info("Ended elapsed focus timer (no quota used)")
     }
 
     func focusTimerExpired() {
@@ -569,7 +649,8 @@ class AppState: ObservableObject {
                                       delayedBlockRetryCount: delayedBlockRetryCount,
                                       delayedBlockGoal: delayedBlockGoal,
                                       focusTimerGoal: focusTimerGoal,
-                                      scheduledExitUsesThisMonth: scheduledExitUsesThisMonth)
+                                      scheduledExitUsesThisMonth: scheduledExitUsesThisMonth,
+                                      focusTimerStart: focusTimerStart)
         do {
             let data = try JSONEncoder().encode(storage)
             try data.write(to: focusTimerURL)
@@ -764,6 +845,7 @@ class AppState: ObservableObject {
             return
         }
         guard !delayedBlockActive else { return }
+        cancelAllNudges()
         let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
         delayedBlockEnd = end
         delayedBlockActive = true
@@ -788,15 +870,21 @@ class AppState: ObservableObject {
             goalOverlay.hide()
             return
         }
-        let title = focusTimerActive ? "专注计时中" : "延时屏蔽中"
+        let title = focusTimerActive ? (isElapsedFocus ? "正计时中" : "专注计时中") : "延时屏蔽中"
         let goal = activeGoal
         let end: Date?
-        if delayedBlockActive {
+        let elapsedStart: Date?
+        if isElapsedFocus {
+            end = nil
+            elapsedStart = focusTimerStart
+        } else if delayedBlockActive {
             end = delayedBlockEnd
+            elapsedStart = nil
         } else {
             end = focusOverlayShowsTime ? focusTimerEnd : nil
+            elapsedStart = nil
         }
-        goalOverlay.show(title: title, goal: goal, end: end) { [weak self] in
+        goalOverlay.show(title: title, goal: goal, end: end, elapsedStart: elapsedStart) { [weak self] in
             self?.goalOverlayDismissedByUser = true
             self?.goalOverlay.hide()
         }
@@ -1401,6 +1489,8 @@ class AppState: ObservableObject {
     private func stopReminderLoop() {
         reminderTask?.cancel()
         reminderTask = nil
+        reminderNudgeTask?.cancel()
+        reminderNudgeTask = nil
     }
 
     private func restartReminderIfNeeded() {
@@ -1408,7 +1498,28 @@ class AppState: ObservableObject {
         if reminderEnabled { startReminderLoop() }
     }
 
+    /// 「稍后提醒」：间隔后强制再弹一次（不论对应开关是否开启）。由 inFlight 与主循环去重。
+    private func scheduleNudge(seconds: TimeInterval, task: inout Task<Void, Never>?, run: @escaping @MainActor () -> Void) {
+        task?.cancel()
+        task = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            run()
+        }
+    }
+
+    /// 清除所有「稍后提醒」的一次性调度（开始专注/延时等后不再弹过期的 offer）。
+    private func cancelAllNudges() {
+        reminderNudgeTask?.cancel(); reminderNudgeTask = nil
+        blockingNoFocusNudgeTask?.cancel(); blockingNoFocusNudgeTask = nil
+        focusEndNudgeTask?.cancel(); focusEndNudgeTask = nil
+        focusTimerReminderNudgeTask?.cancel(); focusTimerReminderNudgeTask = nil
+        delayedBlockNudgeTask?.cancel(); delayedBlockNudgeTask = nil
+    }
+
     private func presentReminderAlert() {
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
         guard !reminderAlertInFlight else { return }
         reminderAlertInFlight = true
         defer { reminderAlertInFlight = false }
@@ -1416,14 +1527,15 @@ class AppState: ObservableObject {
             title: "未屏蔽提醒",
             icon: "bell",
             section1Title: "延时屏蔽计时",
-            message: "您已经 \(reminderIntervalMinutes) 分钟没开启屏蔽了。可立即屏蔽，或设一个时长延时屏蔽，到点自动开启。",
+            message: "已经 \(reminderIntervalMinutes) 分钟没开屏蔽啦。现在开，或设个延时到点自动挡，都行。",
             presets: [("5 分钟", 5), ("10 分钟", 10), ("30 分钟", 30)],
             showGoal: true,
             goalPlaceholder: "这段时间想做什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "延时屏蔽计时",
-            secondaryTitle: "立即屏蔽",
+            sectionActionTitle: "立即屏蔽",
+            secondaryTitle: "取消",
             tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
@@ -1433,12 +1545,19 @@ class AppState: ObservableObject {
             startDelayedBlock(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
-        case .secondary:
+        case .sectionAction:
             Task { await enableBlocking() }   // 立即屏蔽
         case .pause:
             openPractice(.breathing)
+        case .tertiary:
+            // 稍后提醒：设置开着→主循环已按间隔覆盖，无需额外调度器；关着→安排一次 nudge。
+            if reminderEnabled { break }
+            scheduleNudge(seconds: TimeInterval(reminderIntervalMinutes * 60), task: &reminderNudgeTask) { [weak self] in
+                guard let self, !self.blockingEnabled else { return }   // 未屏蔽提醒仅在仍处于未屏蔽时重弹
+                self.presentReminderAlert()
+            }
         default:
-            break   // 稍后提醒 → 循环继续，间隔后再次提醒
+            break   // 取消 → 按设置来：开关开则主循环继续、关则停
         }
     }
 
@@ -1476,6 +1595,8 @@ class AppState: ObservableObject {
     private func stopBlockingNoFocusLoop() {
         blockingNoFocusTask?.cancel()
         blockingNoFocusTask = nil
+        blockingNoFocusNudgeTask?.cancel()
+        blockingNoFocusNudgeTask = nil
     }
 
     private func restartBlockingNoFocusIfNeeded() {
@@ -1483,6 +1604,8 @@ class AppState: ObservableObject {
     }
 
     private func presentBlockingNoFocusAlert() {
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
         guard !blockingNoFocusInFlight else { return }
         blockingNoFocusInFlight = true
         defer { blockingNoFocusInFlight = false }
@@ -1490,14 +1613,17 @@ class AppState: ObservableObject {
             title: "已屏蔽未专注",
             icon: "lock.open",
             section1Title: "专注计时",
-            message: "屏蔽已开启，但还没有开始专注计时。选个时长，现在就开始吧。",
+            message: "屏蔽正开着，正是专注的好时候。倒计时一段，或不限时地投入，都行。",
             presets: [("25 分钟", 25), ("30 分钟", 30), ("60 分钟", 60)],
             showGoal: true,
             goalPlaceholder: "这次想专注完成什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "开始",
-            secondaryTitle: "稍后提醒"
+            showModePicker: true,
+            elapsedPrimaryTitle: "开始正计时",
+            secondaryTitle: "取消",
+            tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1506,10 +1632,19 @@ class AppState: ObservableObject {
             startFocusTimer(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
+        case .elapsed:
+            startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .tertiary:
+            if remindBlockingNoFocus { break }   // 循环已覆盖，不额外调度
+            scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &blockingNoFocusNudgeTask) { [weak self] in
+                // 已屏蔽未专注仅在「屏蔽中且未专注」时重弹
+                guard let self, self.blockingEnabled, !self.focusTimerActive else { return }
+                self.presentBlockingNoFocusAlert()
+            }
         default:
-            break   // 稍后提醒 → 循环继续，间隔后再次提醒
+            break   // 取消 → 按设置来
         }
     }
 
@@ -1674,9 +1809,13 @@ class AppState: ObservableObject {
         isFocusEndNagging = false
         focusEndReminderTask?.cancel()
         focusEndReminderTask = nil
+        focusEndNudgeTask?.cancel()
+        focusEndNudgeTask = nil
     }
 
     private func presentFocusEndReminder() {
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
         guard !focusEndReminderInFlight else { return }
         focusEndReminderInFlight = true
         defer { focusEndReminderInFlight = false }
@@ -1684,14 +1823,17 @@ class AppState: ObservableObject {
             title: "专注计时已结束",
             icon: "timer",
             section1Title: "专注计时",
-            message: "要开始下一段专注计时吗？休息一下，别忘了回来继续。",
+            message: "这一轮结束啦。休息好了就回来，再来一段，或不限时地继续。",
             presets: [("25 分钟", 25), ("30 分钟", 30), ("60 分钟", 60)],
             showGoal: true,
             goalPlaceholder: "这次想专注完成什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "开始",
-            secondaryTitle: "稍后提醒"
+            showModePicker: true,
+            elapsedPrimaryTitle: "开始正计时",
+            secondaryTitle: "取消",
+            tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1700,27 +1842,41 @@ class AppState: ObservableObject {
             startFocusTimer(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
+        case .elapsed:
+            startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .tertiary:
+            if remindFocusTimerAfterEnd { break }   // 循环已覆盖，不额外调度
+            scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &focusEndNudgeTask) { [weak self] in
+                // 专注结束提醒仅在「无专注且屏蔽中」时重弹
+                guard let self, !self.focusTimerActive, self.blockingEnabled else { return }
+                self.presentFocusEndReminder()
+            }
         default:
-            break                           // 稍后提醒 → 循环继续，间隔后再次提醒
+            break                             // 取消 → 按设置来
         }
     }
 
     private func presentFocusTimerReminder() {
         guard remindFocusTimerAfterBlock else { return }
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "屏蔽已开启",
             icon: "lock.open",
             section1Title: "专注计时",
-            message: "要开始专注计时吗？计时中屏蔽名单会锁定。可填一个目标，计时中悬浮提醒。",
+            message: "干扰已经挡在外面啦，现在就来一段专注吧。倒计时或不限时，都按你喜欢。",
             presets: [("25 分钟", 25), ("30 分钟", 30), ("60 分钟", 60)],
             showGoal: true,
             goalPlaceholder: "这次想专注完成什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "开始",
-            secondaryTitle: "取消"
+            showModePicker: true,
+            elapsedPrimaryTitle: "开始正计时",
+            secondaryTitle: "取消",
+            tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1729,8 +1885,17 @@ class AppState: ObservableObject {
             startFocusTimer(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
+        case .elapsed:
+            startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .tertiary:
+            if remindBlockingNoFocus { break }   // 已屏蔽未专注的循环已覆盖该状态
+            scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &focusTimerReminderNudgeTask) { [weak self] in
+                // 屏蔽已开启仅在「仍在屏蔽且未专注」时重弹；否则说明已解除，交给未屏蔽提醒。
+                guard let self, self.blockingEnabled, !self.focusTimerActive else { return }
+                self.presentFocusTimerReminder()
+            }
         default:
             break
         }
@@ -1739,18 +1904,21 @@ class AppState: ObservableObject {
     private func presentDelayedBlockReminder() {
         guard remindDelayedBlockAfterUnblock else { return }
         guard !focusTimerActive else { return }
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "屏蔽已停止",
             icon: "clock",
             section1Title: "延时屏蔽",
-            message: "要设置延时屏蔽吗？到点自动重新屏蔽。可填这段时间想做什么，悬浮提醒。",
+            message: "想自由一会儿，又怕分心？设个延时，到点自动帮你把干扰挡回去。",
             presets: [("5 分钟", 5), ("10 分钟", 10), ("30 分钟", 30)],
             showGoal: true,
             goalPlaceholder: "这段时间想做什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "开始",
-            secondaryTitle: "取消"
+            secondaryTitle: "取消",
+            tertiaryTitle: "稍后提醒"
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1761,6 +1929,13 @@ class AppState: ObservableObject {
             lastError = "请输入有效的自定义分钟数"
         case .pause:
             openPractice(.breathing)
+        case .tertiary:
+            if reminderEnabled { break }   // 未屏蔽提醒的循环已覆盖该状态
+            scheduleNudge(seconds: TimeInterval(reminderIntervalMinutes * 60), task: &delayedBlockNudgeTask) { [weak self] in
+                // 屏蔽已停止仅在「仍处于未屏蔽」时重弹；否则说明已重新屏蔽，交给其他提醒。
+                guard let self, !self.blockingEnabled else { return }
+                self.presentDelayedBlockReminder()
+            }
         default:
             break
         }

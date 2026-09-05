@@ -15,4 +15,6 @@ struct FocusTimerState: Codable {
     var focusTimerGoal: String?
     /// 定时屏蔽「紧急退出」每月已用次数（与专注计时额度互相独立，随 lastResetMonth 重置）。
     var scheduledExitUsesThisMonth: Int? = nil
+    /// 正计时的开始时刻（无 endTimestamp 时表示正在向上计时）。
+    var focusTimerStart: Date? = nil
 }

@@ -7,6 +7,9 @@ struct FocusTimerView: View {
     @State private var focusGoal = ""
     @State private var delayedGoal = ""
     @State private var configKind: FocusTimerState.Kind = .focus
+    @State private var focusMode: FocusMode = .countdown
+
+    private enum FocusMode { case countdown, elapsed }
 
     private let presets = [25, 30, 60]
 
@@ -66,17 +69,46 @@ struct FocusTimerView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            presetAndCustomView(minutes: $focusCustomMinutes)
+            // 模式：倒计时 / 正计时
+            Picker("模式", selection: $focusMode) {
+                Text("倒计时").tag(FocusMode.countdown)
+                Text("正计时").tag(FocusMode.elapsed)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 260)
+
+            if focusMode == .countdown {
+                presetAndCustomView(minutes: $focusCustomMinutes)
+                    .focusCard()
+
+                goalInputCard(
+                    title: "这次想专注完成什么？",
+                    placeholder: "例如：完成报告第三章 · 阅读 30 页书",
+                    hint: "开始计时后，它会悬浮在屏幕上方，提醒你别偏离。",
+                    text: $focusGoal
+                )
+
+                focusOptionsCard
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("正计时")
+                        .font(.headline)
+                    Text("开始后向上累计已用时，没有结束时间；结束时需输入密码，但不占用紧急退出次数。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("悬浮窗会一直显示已用时。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 .focusCard()
 
-            goalInputCard(
-                title: "这次想专注完成什么？",
-                placeholder: "例如：完成报告第三章 · 阅读 30 页书",
-                hint: "开始计时后，它会悬浮在屏幕上方，提醒你别偏离。",
-                text: $focusGoal
-            )
-
-            focusOptionsCard
+                goalInputCard(
+                    title: "这次想专注完成什么？",
+                    placeholder: "例如：完成报告第三章 · 阅读 30 页书",
+                    hint: "开始后悬浮窗会显示已用时，提醒你别偏离。",
+                    text: $focusGoal
+                )
+            }
 
             if !state.blockingEnabled {
                 Text("屏蔽未开启，请先开启屏蔽再使用专注计时")
@@ -86,15 +118,27 @@ struct FocusTimerView: View {
                     .background(Color.focusDanger.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
 
-            Button {
-                state.startFocusTimer(minutes: focusCustomMinutes, goal: focusGoal)
-                focusGoal = ""
-            } label: {
-                Label("开始计时", systemImage: "play.fill")
-                    .padding(.vertical, 6)
+            if focusMode == .countdown {
+                Button {
+                    state.startFocusTimer(minutes: focusCustomMinutes, goal: focusGoal)
+                    focusGoal = ""
+                } label: {
+                    Label("开始计时", systemImage: "play.fill")
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                .disabled(focusCustomMinutes < 1 || state.delayedBlockActive || !state.blockingEnabled)
+            } else {
+                Button {
+                    state.startFocusTimerElapsed(goal: focusGoal)
+                    focusGoal = ""
+                } label: {
+                    Label("开始正计时", systemImage: "play.fill")
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                .disabled(state.delayedBlockActive || !state.blockingEnabled || state.focusTimerActive)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
-            .disabled(focusCustomMinutes < 1 || state.delayedBlockActive || !state.blockingEnabled)
         }
         .padding()
     }
@@ -564,40 +608,76 @@ struct FocusTimerView: View {
             Image(systemName: "lock.fill")
                 .font(.system(size: 40))
                 .foregroundStyle(Color.focusActive)
-            Text("专注计时中")
+            Text(state.isElapsedFocus ? "正计时中" : "专注计时中")
                 .font(.title2.bold())
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(countdownString(at: context.date, end: state.focusTimerEnd))
-                    .font(.system(size: 56, weight: .light, design: .monospaced))
-                    .monospacedDigit()
+                if state.isElapsedFocus {
+                    Text(elapsedString(context.date))
+                        .font(.system(size: 56, weight: .light, design: .monospaced))
+                        .monospacedDigit()
+                } else {
+                    Text(countdownString(at: context.date, end: state.focusTimerEnd))
+                        .font(.system(size: 56, weight: .light, design: .monospaced))
+                        .monospacedDigit()
+                }
             }
             Text("所有屏蔽设置已锁定")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if state.isElapsedFocus {
+                Text("正计时：无结束时间，需手动结束")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
 
             if let goal = state.focusTimerGoal, !goal.isEmpty {
                 goalDisplayCard(goal)
             }
 
-            VStack(spacing: 6) {
-                Text("本月紧急退出剩余 \(max(0, state.emergencyQuota - state.emergencyUsesThisMonth)) 次")
-                    .font(.subheadline)
-                Text("紧急退出需输入密码，且每月最多 \(state.emergencyQuota) 次")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if state.isElapsedFocus {
+                VStack(spacing: 6) {
+                    Text("结束需输入密码，不占用紧急退出次数")
+                        .font(.subheadline)
+                }
+                .focusCard()
+                Button {
+                    state.requestEndElapsedFocus()
+                } label: {
+                    Label("结束正计时", systemImage: "xmark.shield")
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+            } else {
+                VStack(spacing: 6) {
+                    Text("本月紧急退出剩余 \(max(0, state.emergencyQuota - state.emergencyUsesThisMonth)) 次")
+                        .font(.subheadline)
+                    Text("紧急退出需输入密码，且每月最多 \(state.emergencyQuota) 次")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .focusCard()
+                Button {
+                    state.showEmergencyOverrideSheet = true
+                } label: {
+                    Label("紧急退出", systemImage: "xmark.shield")
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+                .disabled(state.emergencyUsesThisMonth >= state.emergencyQuota)
             }
-            .focusCard()
-
-            Button {
-                state.showEmergencyOverrideSheet = true
-            } label: {
-                Label("紧急退出", systemImage: "xmark.shield")
-                    .padding(.vertical, 6)
-            }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-            .disabled(state.emergencyUsesThisMonth >= state.emergencyQuota)
         }
         .padding()
+    }
+
+    /// 正计时已用时（HH:MM:SS）。
+    private func elapsedString(_ now: Date) -> String {
+        guard let start = state.focusTimerStart else { return "00:00" }
+        let total = max(0, Int(now.timeIntervalSince(start)))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%02d:%02d", m, s)
     }
 
     @ViewBuilder

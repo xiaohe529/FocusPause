@@ -11,9 +11,11 @@ enum PanelChoice {
     case primary          // 主按钮（立即开启 / 开始）
     case preset(Int)      // 选中的预设时长（分钟）
     case custom(Int)      // 自定义分钟
+    case elapsed          // 选「正计时」（不限时）
     case pause            // 点了「暂停一下」，跳转到暂停版块
-    case secondary        // 次按钮（稍后提醒 / 取消）
-    case tertiary         // 第三按钮（不再提醒 / 本次算了）
+    case secondary        // footer 次按钮（取消）
+    case tertiary         // footer 第三按钮（稍后提醒）
+    case sectionAction    // 版块内的第二个动作（如「立即屏蔽」）
     case cancel           // 关闭
 }
 
@@ -33,6 +35,12 @@ struct PromptPanelConfig {
     var actionItems: [PromptItem] = []
     var textItems: [PromptItem] = []
     var primaryTitle = "确定"
+    /// 「倒计时 / 正计时」模式切换（显示在版块顶部）。开启后正计时隐藏时长、主按钮文案用 elapsedPrimaryTitle。
+    var showModePicker = false
+    /// 正计时时主按钮文案（默认「开始正计时」）。
+    var elapsedPrimaryTitle: String? = nil
+    /// 版块内主按钮下方的第二个动作（如「立即屏蔽」），返回 .sectionAction。描边风格以示区别于「暂停一下」。
+    var sectionActionTitle: String? = nil
     var secondaryTitle: String? = nil
     var tertiaryTitle: String? = nil
 }
@@ -46,6 +54,9 @@ struct PracticePromptPanel: View {
     @State private var toast: String?
     @State private var toastGeneration = 0
     @State private var textHintIndex = 0
+    @State private var elapsedMode = false
+    @FocusState private var goalFocused: Bool
+    @FocusState private var minutesFocused: Bool
 
     private enum DurationSel {
         case preset(Int)
@@ -76,7 +87,13 @@ struct PracticePromptPanel: View {
         }
         .padding(16)
         .frame(width: 380, alignment: .top)
-        .onAppear { pickRandomTextHint(forceDifferent: false) }
+        .onAppear {
+            pickRandomTextHint(forceDifferent: false)
+            // 有事件输入框时自动聚焦，打开就能看见光标、直接输入，避免「点不到/没光标」。
+            if config.showGoal {
+                DispatchQueue.main.async { goalFocused = true }
+            }
+        }
     }
 
     private var header: some View {
@@ -100,7 +117,25 @@ struct PracticePromptPanel: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !config.presets.isEmpty {
+            // 「倒计时 / 正计时」模式切换（与主页面一致）；正计时隐藏时长、事件输入仍共用。
+            if config.showModePicker {
+                Picker("模式", selection: $elapsedMode) {
+                    Text("倒计时").tag(false)
+                    Text("正计时").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 240)
+            }
+
+            if config.showModePicker && elapsedMode {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("不限时专注")
+                        .font(.subheadline.weight(.semibold))
+                    Text("向下累计时长，自己决定何时结束；结束时需密码，不占用紧急退出次数。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if !config.presets.isEmpty {
                 Text("预设时间")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -126,6 +161,7 @@ struct PracticePromptPanel: View {
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 52)
+                        .focused($minutesFocused)
                     Text("分钟")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -136,9 +172,10 @@ struct PracticePromptPanel: View {
                 TextField(config.goalPlaceholder ?? "", text: $goal, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...3)
+                    .focused($goalFocused)
             }
 
-            // 主按钮（开始 / 立即开启）放在本版块，包内容、居中
+            // 主按钮（开始 / 立即开启 / 开始正计时）放在本版块，包内容、居中
             HStack {
                 Spacer()
                 Button {
@@ -146,12 +183,31 @@ struct PracticePromptPanel: View {
                     result.choice = primaryChoice
                     dismiss()
                 } label: {
-                    Text(config.primaryTitle)
+                    Text(primaryButtonTitle)
                         .padding(.vertical, 8)
                         .padding(.horizontal, 10)
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                 Spacer()
+            }
+
+            // 版块内第二个动作（如「立即屏蔽」），返回 .sectionAction——描边样式，与「暂停一下」区分。
+            if let sectionActionTitle = config.sectionActionTitle {
+                HStack {
+                    Spacer()
+                    Button {
+                        result.goal = goal
+                        result.choice = .sectionAction
+                        dismiss()
+                    } label: {
+                        Text(sectionActionTitle)
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 8)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(Color.focusActive)
+                    Spacer()
+                }
             }
         }
         .focusCard()
@@ -309,9 +365,31 @@ struct PracticePromptPanel: View {
     }
 
     private var primaryChoice: PanelChoice {
+        if config.showModePicker && elapsedMode { return .elapsed }
         guard !config.presets.isEmpty else { return .primary }
         if case .preset(let minutes) = duration { return .preset(minutes) }
         return .custom(customMinutes)
+    }
+
+    /// 主按钮文案：正计时模式用「开始正计时」，否则用 config.primaryTitle。
+    private var primaryButtonTitle: String {
+        if config.showModePicker && elapsedMode {
+            return config.elapsedPrimaryTitle ?? "开始正计时"
+        }
+        return config.primaryTitle
+    }
+}
+
+/// 自定义 hosting view：确保面板内 SwiftUI 文本框「第一次点击」就能获得焦点并显示光标。
+/// 默认 NSHostingView 不接收 first mouse / 不作为 first responder，导致 NSPanel 里点输入框没光标、要点两次。
+private final class FocusHostingView<Content: View>: NSHostingView<Content> {
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+private final class FocusHostingController<Content: View>: NSHostingController<Content> {
+    override func loadView() {
+        view = FocusHostingView(rootView: rootView)
     }
 }
 
@@ -328,6 +406,10 @@ enum PromptPanelPresenter {
         panel.isFloatingPanel = true
         panel.level = .modalPanel
         panel.hidesOnDeactivate = false
+        // 关键：让 utility 面板能正常成为 key window（默认 becomesKeyOnlyIfNeeded=true 会拒绝键盘焦点，
+        // 导致弹窗里的输入框点进去不显示光标）。
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.isMovableByWindowBackground = true
 
         let result = PanelResult()
         let dismiss: () -> Void = {
@@ -335,7 +417,7 @@ enum PromptPanelPresenter {
             NSApp.stopModal()
         }
         let root = PracticePromptPanel(config: config, result: result, dismiss: dismiss)
-        let controller = NSHostingController(rootView: root)
+        let controller = FocusHostingController(rootView: root)
         panel.contentViewController = controller
         let size = controller.view.fittingSize
         panel.setContentSize(NSSize(width: max(380, min(size.width, 480)), height: max(220, size.height)))
@@ -350,8 +432,21 @@ enum PromptPanelPresenter {
             panel.setFrameOrigin(origin)
         }
 
+        // 激活 app：弹窗需要是激活态，SwiftUI 文本框才会真正绘制竖杠光标（否则 key window 不生效、点不出光标）。
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.makeKey()   // 确保成为 key window，弹窗输入框第一次点击即有光标
+        FocusLogger.info("PromptPanel OPEN — title=\(config.title)")
         NSApp.runModal(for: panel)
+
+        // 提醒弹窗常在「app 不在前台」时由定时器触发。关闭弹窗时 runModal 会把主窗口恢复成 key，
+        // 把它顶到当前 App 前面——这里把主窗口悄悄收到后面，避免「处理完弹窗，主界面自己跳出来」。
+        // 有意的跳转（"暂停一下" -> openPractice -> onOpenMainWindow）会在后续主动呼起主窗口，不受影响。
+        if !NSApp.isActive, let main = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isMainWindow }) {
+            main.orderBack(nil)
+        }
+
+        FocusLogger.info("PromptPanel CLOSED — title=\(config.title) choice=\(String(describing: result.choice))")
         return result
     }
 }
