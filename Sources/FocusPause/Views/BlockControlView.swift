@@ -8,6 +8,9 @@ struct BlockControlView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            SetupChecklistView(state: state)
+                .padding(.bottom, 12)
+
             SubSegmentCard(
                 options: [
                     .init(value: 0, label: "网站屏蔽", icon: "globe"),

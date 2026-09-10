@@ -1,7 +1,20 @@
 import Foundation
 
 @objc public protocol HelperProtocol {
-    func executeCommand(_ command: String, withReply reply: @escaping (Bool, String) -> Void)
-    func ping(_ dummy: String, withReply reply: @escaping (Bool, String) -> Void)
-    func verifyToken(_ token: String, withReply reply: @escaping (Bool) -> Void)
+    func ping(_ token: String, withReply reply: @escaping (Bool, String) -> Void)
+    func applyHosts(
+        _ token: String,
+        domains: [String],
+        withReply reply: @escaping (Bool, String) -> Void
+    )
+    func clearHosts(
+        _ token: String,
+        withReply reply: @escaping (Bool, String) -> Void
+    )
+    func setDNSServers(
+        _ token: String,
+        service: String,
+        servers: [String],
+        withReply reply: @escaping (Bool, String) -> Void
+    )
 }

@@ -1,11 +1,11 @@
 import AppKit
 import Foundation
 
-/// Not @MainActor — timer callbacks run from background queue
-class AppBlocker: NSObject {
+@MainActor
+final class AppBlocker: NSObject {
     private var blockedApps: [String] = []
     private var isBlockingEnabled = false
-    private var source: DispatchSourceTimer?
+    private var sweepTask: Task<Void, Never>?
 
     func updateBlockedApps(_ names: [String]) {
         blockedApps = names
@@ -14,63 +14,70 @@ class AppBlocker: NSObject {
     func setBlockingEnabled(_ enabled: Bool) {
         isBlockingEnabled = enabled
         if enabled {
-            sweepOnce()
+            start()
+        } else {
+            stop()
         }
     }
 
     func start() {
-        let dq = DispatchQueue(label: "com.focuspause.appblocker", qos: .background)
-        let timer = DispatchSource.makeTimerSource(queue: dq)
-        timer.schedule(deadline: .now() + 5, repeating: 5.0)
-        timer.setEventHandler { [weak self] in
-            self?.sweepOnce()
+        stop()
+        sweepTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled else { return }
+                await self.sweepOnce()
+            }
         }
-        timer.resume()
-        source = timer
     }
 
     func stop() {
-        source?.cancel()
-        source = nil
+        sweepTask?.cancel()
+        sweepTask = nil
     }
 
-    private func sweepOnce() {
+    /// Run one enforcement pass immediately; used right after enabling blocking so
+    /// blocked apps are killed before any follow-up reminder steals focus.
+    func enforceNow() async {
+        guard isBlockingEnabled else { return }
+        await sweepOnce()
+    }
+
+    private func sweepOnce() async {
         guard isBlockingEnabled else { return }
         let blocked = blockedApps
-        let enabled = isBlockingEnabled
-        guard enabled else { return }
 
-        let running = NSWorkspace.shared.runningApplications
-        for app in running {
-            // Skip non-app processes: input methods, system helpers, agents
-            guard app.activationPolicy == .regular else { continue }
-            guard app.bundleIdentifier != nil else { continue }
+        for app in NSWorkspace.shared.runningApplications {
+            guard Task.isCancelled == false else { return }
+            guard app.activationPolicy == .regular, app.bundleIdentifier != nil else { continue }
 
             let name = app.localizedName ?? ""
             let bundleID = app.bundleIdentifier ?? ""
-            let bundleFilename = app.bundleURL?.lastPathComponent.replacingOccurrences(of: ".app", with: "") ?? ""
+            let bundleFilename = app.bundleURL?
+                .lastPathComponent
+                .replacingOccurrences(of: ".app", with: "") ?? ""
+
             for target in blocked {
                 let clean = target.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !clean.isEmpty else { continue }
-                // Exact match (case-insensitive) on localizedName, bundleIdentifier, or bundle filename.
-                // Filename match is needed because loadInstalledApps() returns bundle filenames
-                // (e.g. "WeChat") which differ from localizedName ("微信") for many CJK apps.
+
                 let nameMatch = name.localizedCaseInsensitiveCompare(clean) == .orderedSame
                 let bundleMatch = bundleID.localizedCaseInsensitiveCompare(clean) == .orderedSame
                 let filenameMatch = bundleFilename.localizedCaseInsensitiveCompare(clean) == .orderedSame
                 guard nameMatch || bundleMatch || filenameMatch else { continue }
+
                 let pid = app.processIdentifier
                 app.terminate()
-                sleep(2)
-                // Check again — terminate is async and may fail if app ignores it
-                if isBlockingEnabled {
-                    let stillRunning = NSWorkspace.shared.runningApplications.contains {
-                        $0.processIdentifier == pid
-                    }
-                    if stillRunning {
-                        // Force kill by PID — avoids killall's name-collision hazard
-                        kill(pid, SIGKILL)
-                    }
+                if pid > 0 {
+                    try? await Task.sleep(for: .seconds(2))
+                }
+
+                guard isBlockingEnabled, !Task.isCancelled, pid > 0 else { break }
+                let stillRunning = NSWorkspace.shared.runningApplications.contains {
+                    $0.processIdentifier == pid
+                }
+                if stillRunning {
+                    kill(pid, SIGKILL)
                 }
                 break
             }

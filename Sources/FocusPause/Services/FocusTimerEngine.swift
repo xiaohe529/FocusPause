@@ -1,33 +1,28 @@
 import Foundation
 
-/// Not @MainActor — timer callbacks run from a background queue.
-/// Mirrors ScheduleEngine's pattern. Holds no persistent state; AppState owns
-/// the endTimestamp and persists it. This engine only fires onExpire when the
-/// deadline passes.
-class FocusTimerEngine {
+@MainActor
+final class FocusTimerEngine {
     var onExpire: (() -> Void)?
 
     private var endTimestamp: Date?
-    private var source: DispatchSourceTimer?
+    private var timerTask: Task<Void, Never>?
 
     func start(endTimestamp: Date) {
         self.endTimestamp = endTimestamp
         stop()
-        checkNow()
 
-        let dq = DispatchQueue(label: "com.focuspause.focustimer", qos: .utility)
-        let timer = DispatchSource.makeTimerSource(queue: dq)
-        timer.schedule(deadline: .now() + 1, repeating: 1.0)
-        timer.setEventHandler { [weak self] in
-            self?.checkNow()
+        timerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self, !Task.isCancelled else { return }
+                self.checkNow()
+            }
         }
-        timer.resume()
-        source = timer
     }
 
     func stop() {
-        source?.cancel()
-        source = nil
+        timerTask?.cancel()
+        timerTask = nil
     }
 
     private func checkNow() {

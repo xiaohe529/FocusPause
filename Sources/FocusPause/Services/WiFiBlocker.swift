@@ -120,8 +120,9 @@ class WiFiBlocker: ObservableObject {
             try? data.write(toFile: Self.dnsBackupPath, atomically: true, encoding: .utf8)
         }
 
-        let result = await PrivilegedExecutor.run(
-            "networksetup -setdnsservers '\(Self.serviceName)' 127.0.0.1")
+        let result = await HelperConnection.shared.setDNSServers(
+            service: Self.serviceName,
+            servers: ["127.0.0.1"])
         if !result.success {
             throw NSError(domain: "WiFiBlocker", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: result.output])
@@ -136,16 +137,10 @@ class WiFiBlocker: ObservableObject {
                 .filter { !$0.isEmpty && Self.isValidIP($0) }
         }
 
-        let cmd: String
-        if originalDNS.isEmpty {
-            // No valid backup — set to auto (DHCP)
-            cmd = "networksetup -setdnsservers '\(Self.serviceName)' Empty"
-        } else {
-            let dnsList = originalDNS.joined(separator: " ")
-            cmd = "networksetup -setdnsservers '\(Self.serviceName)' \(dnsList)"
-        }
-
-        let result = await PrivilegedExecutor.run(cmd)
+        let servers = originalDNS.isEmpty ? ["Empty"] : originalDNS
+        let result = await HelperConnection.shared.setDNSServers(
+            service: Self.serviceName,
+            servers: servers)
         if !result.success {
             throw NSError(domain: "WiFiBlocker", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: result.output])

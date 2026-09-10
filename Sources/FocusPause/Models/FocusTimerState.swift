@@ -17,4 +17,6 @@ struct FocusTimerState: Codable {
     var scheduledExitUsesThisMonth: Int? = nil
     /// 正计时的开始时刻（无 endTimestamp 时表示正在向上计时）。
     var focusTimerStart: Date? = nil
+    /// 普通倒计时专注的开始时刻，用于进度显示；旧状态可为空。
+    var focusCountdownStart: Date? = nil
 }

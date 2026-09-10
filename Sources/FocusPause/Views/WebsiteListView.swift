@@ -1,4 +1,5 @@
 import SwiftUI
+import FocusPauseHelperShared
 
 struct WebsiteListView: View {
     @ObservedObject var state: AppState
@@ -84,6 +85,17 @@ struct WebsiteListView: View {
                 }
             }
 
+            if !state.invalidWebsiteRules.isEmpty {
+                InfoBanner(style: .warning, icon: "exclamationmark.triangle") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("以下网站规则无效，不会参与屏蔽，请删除后重新添加：")
+                        ForEach(state.invalidWebsiteRules) { rule in
+                            Text("· \(rule.name)")
+                        }
+                    }
+                }
+            }
+
             Divider()
 
             // Rule list
@@ -91,7 +103,7 @@ struct WebsiteListView: View {
                 emptyView
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
+                    VStack(spacing: 8) {
                         ForEach($state.blockRules) { $rule in
                             if rule.type == .website {
                                 ruleRow($rule)
@@ -178,8 +190,9 @@ struct WebsiteListView: View {
             }
             .buttonStyle(AlwaysActiveBorderlessStyle())
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
         .onChange(of: rule.enabled.wrappedValue) { oldValue, newState in
             // Skip if this change is a revert from a failed/cancelled operation
             if revertingRuleID == r.id {
@@ -217,24 +230,29 @@ struct WebsiteListView: View {
                 }
             }
         }
-        Divider()
-            .padding(.leading, 28)
     }
 
     func addDomain() {
         let clean = newDomain.trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty,
-              !state.blockRules.contains(where: { $0.name == clean && $0.type == .website })
-        else { return }
-        state.blockRules.append(BlockRule(name: clean, type: .website))
+        guard let domain = DomainNormalizer.normalize(clean) else {
+            state.lastError = "请输入有效域名，例如 weibo.com"
+            return
+        }
+        guard !state.blockRules.contains(where: { $0.name == domain && $0.type == .website }) else {
+            newDomain = ""
+            return
+        }
+        state.blockRules.append(BlockRule(name: domain, type: .website))
         Task { _ = await state.save() }
+        state.lastError = nil
         newDomain = ""
     }
 
     func addSuggestion(_ s: String) {
-        guard !state.blockRules.contains(where: { $0.name == s && $0.type == .website })
+        guard let domain = DomainNormalizer.normalize(s) else { return }
+        guard !state.blockRules.contains(where: { $0.name == domain && $0.type == .website })
         else { return }
-        state.blockRules.append(BlockRule(name: s, type: .website))
+        state.blockRules.append(BlockRule(name: domain, type: .website))
         Task { _ = await state.save() }
     }
 }

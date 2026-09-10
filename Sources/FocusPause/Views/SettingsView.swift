@@ -133,20 +133,22 @@ struct SettingsView: View {
                 .onChange(of: state.launchAtLogin) { _, v in state.setLaunchAtLogin(v) }
 
                 HStack {
-                    Image(systemName: state.helperInstalled ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                        .foregroundStyle(state.helperInstalled ? .green : .orange)
+                    Image(systemName: state.helperNeedsRepair ? "exclamationmark.shield.fill" : (state.helperInstalled ? "checkmark.shield.fill" : "exclamationmark.shield.fill"))
+                        .foregroundStyle(state.helperNeedsRepair ? .orange : (state.helperInstalled ? .green : .orange))
                         .frame(width: 20)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("后台助手")
                             .font(.subheadline)
-                        Text(state.helperInstalled
-                             ? "已安装，屏蔽操作静默执行"
-                             : "未安装，首次操作将请求授权")
+                        Text(state.helperNeedsRepair
+                             ? "已运行，但需要安全修复"
+                             : state.helperInstalled
+                                 ? "已安装，屏蔽操作静默执行"
+                                 : "未安装，首次操作将请求授权")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if state.helperInstalled {
+                    if state.helperInstalled && !state.helperNeedsRepair {
                         Button("卸载") { showUninstallConfirm = true }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -155,7 +157,7 @@ struct SettingsView: View {
                         Button {
                             Task { await state.installHelper() }
                         } label: {
-                            Text(state.isInstallingHelper ? "安装中…" : "安装")
+                            Text(state.isInstallingHelper ? "安装中…" : (state.helperNeedsRepair ? "修复" : "安装"))
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -713,6 +715,7 @@ struct SettingsView: View {
         let ok = await HelperInstaller.uninstall()
         if ok {
             state.helperInstalled = false
+            state.helperNeedsRepair = false
             state.helperInstallAttempted = false
         } else {
             recoveryError = "卸载失败，请稍后重试"

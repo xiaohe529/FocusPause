@@ -11,6 +11,10 @@ enum HelperInstaller {
         let token = generateToken()
         let tokenTmp = "/tmp/focuspause-helper.token"
         try? token.write(toFile: tokenTmp, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: tokenTmp
+        )
         defer { try? FileManager.default.removeItem(atPath: tokenTmp) }
 
         guard let plistSrc = findPlist() else {
@@ -26,6 +30,7 @@ enum HelperInstaller {
         defer { try? FileManager.default.removeItem(atPath: plistTmp) }
 
         let binSrc = helperBinURL.path
+        let ownerUID = getuid()
         let script = """
         set binDest to "/Library/PrivilegedHelperTools/com.focuspause.helper"
         set plistDest to "/Library/LaunchDaemons/com.focuspause.helper.plist"
@@ -44,7 +49,7 @@ enum HelperInstaller {
 
         do shell script "cp -f " & quoted form of plistSrc & " " & quoted form of plistDest & " && chmod 644 " & quoted form of plistDest & " && chown root:wheel " & quoted form of plistDest with administrator privileges
 
-        do shell script "mkdir -p /Library/Application\\\\ Support/FocusPause && cp -f " & quoted form of tokenSrc & " " & quoted form of tokenDest & " && chmod 644 " & quoted form of tokenDest & " && chown root:wheel " & quoted form of tokenDest with administrator privileges
+        do shell script "mkdir -p /Library/Application\\\\ Support/FocusPause && cp -f " & quoted form of tokenSrc & " " & quoted form of tokenDest & " && chmod 600 " & quoted form of tokenDest & " && chown \(ownerUID):wheel " & quoted form of tokenDest with administrator privileges
 
         do shell script "launchctl bootstrap system " & quoted form of plistDest with administrator privileges
         """
@@ -60,8 +65,20 @@ enum HelperInstaller {
         return await runOSAScript(script)
     }
 
-    static func isInstalledAndRunning() async -> Bool {
+    static func isRunning() async -> Bool {
         await HelperConnection.shared.probe()
+    }
+
+    /// Older installs exposed the helper token to every local user. Treat those
+    /// installations as needing repair so the next helper install fixes them.
+    static func tokenPermissionsAreSecure() -> Bool {
+        let path = HelperConstants.tokenPath
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              let owner = attributes[.ownerAccountName] as? String else {
+            return false
+        }
+        return permissions.uint16Value == 0o600 && owner == NSUserName()
     }
 
     // MARK: - Internals

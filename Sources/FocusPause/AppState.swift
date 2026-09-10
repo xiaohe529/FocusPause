@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import FocusPauseHelperShared
 import ApplicationServices
 import ServiceManagement
 import CoreGraphics
@@ -28,6 +29,8 @@ class AppState: ObservableObject {
     @Published var focusTimerEnd: Date? = nil
     /// 正计时（无结束时间、向上计时）的开始时刻；不为 nil 表示当前是正计时。
     @Published var focusTimerStart: Date? = nil
+    /// 普通倒计时专注的开始时刻，用于绘制进度。
+    @Published var focusCountdownStart: Date? = nil
     @Published var emergencyUsesThisMonth = 0
     @Published var showEmergencyOverrideSheet = false
     @Published var delayedBlockActive = false
@@ -41,6 +44,7 @@ class AppState: ObservableObject {
     @Published var delayedBlockAllowExtension = true
     @Published var focusOverlayShowsTime = true
     @Published var helperInstalled = false
+    @Published var helperNeedsRepair = false
     @Published var isInstallingHelper = false
     var helperInstallAttempted = false
 
@@ -265,8 +269,14 @@ class AppState: ObservableObject {
     // MARK: - 有效屏蔽规则（受全拦总开关影响）
 
     /// 实际用于屏蔽的网站域名：全拦开启时忽略每条规则开关。
+    var invalidWebsiteRules: [BlockRule] {
+        blockRules.filter { $0.type == .website && DomainNormalizer.normalize($0.name) == nil }
+    }
+
     var effectiveWebsites: [String] {
-        blockRules.filter { $0.type == .website && (forceBlockAll || $0.enabled) }.map { $0.name }
+        blockRules
+            .filter { $0.type == .website && (forceBlockAll || $0.enabled) }
+            .compactMap { DomainNormalizer.normalize($0.name) }
     }
     /// 实际用于屏蔽的 App 名称：同上。
     var effectiveApps: [String] {
@@ -328,13 +338,18 @@ class AppState: ObservableObject {
         // Otherwise skip restore so first open doesn't trigger an admin password prompt.
         // User clicks "开启屏蔽" to install helper and resume blocking.
         Task { @MainActor in
-            self.helperInstalled = await HelperInstaller.isInstalledAndRunning()
-            if !self.helperInstalled {
-                FocusLogger.info("Helper not installed — skipping blocking restore on launch")
+            let helperRunning = await HelperInstaller.isRunning()
+            self.helperInstalled = helperRunning
+            self.helperNeedsRepair = helperRunning && !HelperInstaller.tokenPermissionsAreSecure()
+            guard helperRunning else {
+                FocusLogger.info("Helper not running — keeping persisted blocking state")
                 if self.blockingEnabled {
-                    self.blockingEnabled = false
-                    self.appBlocker.setBlockingEnabled(false)
+                    self.lastError = "后台助手未运行，当前屏蔽保持，但更新规则前需要重新安装助手。"
                 }
+                return
+            }
+            if self.helperNeedsRepair {
+                self.lastError = "后台助手需要安全修复，请重新安装助手。"
                 return
             }
             guard self.blockingEnabled else { return }
@@ -444,6 +459,8 @@ class AppState: ObservableObject {
         // Reset transient timer state — will be repopulated below
         focusTimerActive = false
         focusTimerEnd = nil
+        focusTimerStart = nil
+        focusCountdownStart = nil
         delayedBlockActive = false
         delayedBlockEnd = nil
         delayedBlockPendingAuth = false
@@ -468,6 +485,7 @@ class AppState: ObservableObject {
             case .focus:
                 focusTimerEnd = end
                 focusTimerActive = true
+                focusCountdownStart = loaded.focusCountdownStart
                 focusTimerEngine.onExpire = { [weak self] in
                     Task { @MainActor in self?.focusTimerExpired() }
                 }
@@ -475,6 +493,7 @@ class AppState: ObservableObject {
             case .delayedBlock:
                 delayedBlockEnd = end
                 delayedBlockActive = true
+                delayedBlockRetryCount = loaded.delayedBlockRetryCount ?? 0
                 focusTimerEngine.onExpire = { [weak self] in
                     Task { @MainActor in self?.delayedBlockExpired() }
                 }
@@ -492,8 +511,9 @@ class AppState: ObservableObject {
             delayedBlockPendingAuth = true
             delayedBlockRetryCount = loaded.delayedBlockRetryCount ?? 0
             FocusLogger.info("Resumed pending-auth state, retryCount=\(delayedBlockRetryCount)")
-            // Pop the alert immediately on restart — global nag
-            presentExtendAlert()
+            // Do not run a modal panel while applicationDidFinishLaunching is still active.
+            // Otherwise the main window can take focus and the panel can be left hidden/tiny.
+            scheduleStartupPendingAlert()
         } else {
             saveFocusTimer()
         }
@@ -520,6 +540,7 @@ class AppState: ObservableObject {
         stopFocusEndReminder()
         focusTimerEnd = end
         focusTimerActive = true
+        focusCountdownStart = Date()
         focusTimerGoal = goal?.isEmpty == true ? nil : goal
         goalOverlayDismissedByUser = false
         focusTimerEngine.onExpire = { [weak self] in
@@ -583,6 +604,7 @@ class AppState: ObservableObject {
         FocusLogger.info("Focus timer expired naturally")
         focusTimerActive = false
         focusTimerEnd = nil
+        focusCountdownStart = nil
         focusTimerGoal = nil
         focusTimerEngine.stop()
         saveFocusTimer()
@@ -608,6 +630,7 @@ class AppState: ObservableObject {
         if focusTimerActive {
             focusTimerActive = false
             focusTimerEnd = nil
+            focusCountdownStart = nil
             focusTimerGoal = nil
             focusTimerEngine.stop()
         }
@@ -650,7 +673,8 @@ class AppState: ObservableObject {
                                       delayedBlockGoal: delayedBlockGoal,
                                       focusTimerGoal: focusTimerGoal,
                                       scheduledExitUsesThisMonth: scheduledExitUsesThisMonth,
-                                      focusTimerStart: focusTimerStart)
+                                      focusTimerStart: focusTimerStart,
+                                      focusCountdownStart: focusCountdownStart)
         do {
             let data = try JSONEncoder().encode(storage)
             try data.write(to: focusTimerURL)
@@ -845,6 +869,7 @@ class AppState: ObservableObject {
             return
         }
         guard !delayedBlockActive else { return }
+        delayedBlockRetryCount = 0
         cancelAllNudges()
         let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
         delayedBlockEnd = end
@@ -906,35 +931,46 @@ class AppState: ObservableObject {
             lockScreen()
         }
 
-        // Extension is only useful when the user still has retries left. Once they've used
-        // their one extension, the next expiry auto-blocks — no point popping an alert
-        // whose only button is "立即屏蔽".
+        // The first expiry shows a decision prompt so the user may consume their
+        // extension before blocking starts. Once the extension is unavailable,
+        // expiry auto-blocks; the post-block reminder is shown by enableBlocking().
         let canStillExtend = delayedBlockAllowExtension && delayedBlockRetryCount < 1
 
         if canStillExtend {
+            guard beginReminderModal() else {
+                Task { await attemptDelayedBlockEnable(initialAlert: false) }
+                return
+            }
+            defer { endReminderModal() }
+
             let presets: [(String, Int)] = [("再等 5 分钟", 5), ("再等 10 分钟", 10)]
-            let (choice, _) = durationAlert(
+            let result = PromptPanelPresenter.run(PromptPanelConfig(
                 title: "延时屏蔽时间到",
-                message: "倒计时已结束。（可延长 1 次）",
-                goalPlaceholder: nil,
-                style: .warning,
                 icon: "clock.badge.exclamationmark",
-                prefix: ["立即屏蔽"],
+                section1Title: "屏蔽准备完成",
+                message: "倒计时已结束。现在开启屏蔽，或延长一次作为最后缓冲。",
+                subtitle: "可延长 1 次",
+                tone: .warning,
                 presets: presets,
-                customButtonTitle: "自定义时长")
-            switch choice {
-            case .prefix:
-                Task { await attemptDelayedBlockEnable(initialAlert: true) }
-            case .preset(let index):
-                extendDelayedBlock(minutes: presets[index].1)
+                actionItems: actionPrompts.filter { $0.text != "暂停一下" },
+                textItems: textPrompts,
+                primaryTitle: "立即屏蔽",
+                primaryTint: .focusActive,
+                primaryHint: "不需要延长？",
+                durationConfirmTitle: "确认延长",
+                showPause: false
+            ))
+
+            switch result.choice {
+            case .preset(let minutes):
+                extendDelayedBlock(minutes: minutes)
             case .custom(let minutes) where minutes > 0:
                 extendDelayedBlock(minutes: minutes)
             default:
-                // ESC / invalid custom — treat as 立即屏蔽 to avoid escape loophole
+                // Close / invalid custom means block now, not an escape hatch.
                 Task { await attemptDelayedBlockEnable(initialAlert: true) }
             }
         } else {
-            // Either extension disabled, or extension used up — auto-block, no alert.
             Task { await attemptDelayedBlockEnable(initialAlert: true) }
         }
     }
@@ -1013,9 +1049,8 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Extend the timer after expiry (user picked 5 or 10 min). Consumes one of 2 allowed extensions.
-    /// Called from both natural-expiry path (delayedBlockExpired → user picks "再等 5 分钟")
-    /// and pending-auth path (presentExtendAlert → user picks "再等 5 分钟").
+    /// Extend the timer (user picked 5 or 10 min). Consumes one extension.
+    /// Called when the first expiry prompt chooses a delay; after that, expiry auto-blocks.
     func extendDelayedBlock(minutes: Int) {
         guard delayedBlockRetryCount < 1 else { return }
         delayedBlockRetryCount += 1
@@ -1053,47 +1088,49 @@ class AppState: ObservableObject {
         pendingAlertInFlight = true
         stopPendingAlertLoop()
 
-        var subtitle = "到点未成功开启屏蔽，请选择："
-        if delayedBlockRetryCount < 1 {
-            subtitle += "（还可延长 1 次）"
-        } else {
-            subtitle += "（延长次数已用完）"
+        guard beginReminderModal() else {
+            pendingAlertInFlight = false
+            scheduleNextPendingAlert()
+            return
+        }
+        defer {
+            pendingAlertInFlight = false
+            endReminderModal()
         }
 
-        if delayedBlockRetryCount < 1 {
-            let presets: [(String, Int)] = [("再等 5 分钟", 5), ("再等 10 分钟", 10)]
-            let (choice, _) = durationAlert(
-                title: "屏蔽未生效",
-                message: subtitle,
-                goalPlaceholder: nil,
-                style: .warning,
-                icon: "exclamationmark.triangle.fill",
-                presets: presets,
-                customButtonTitle: "自定义时长",
-                extras: ["立即授权"])
-            pendingAlertInFlight = false
-            switch choice {
-            case .preset(let index):
-                extendDelayedBlock(minutes: presets[index].1)
-            case .custom(let minutes) where minutes > 0:
-                extendDelayedBlock(minutes: minutes)
-            default:
-                retryDelayedBlockNow()  // 立即授权 / ESC / invalid custom
-            }
-        } else {
-            _ = durationAlert(
-                title: "屏蔽未生效",
-                message: subtitle,
-                goalPlaceholder: nil,
-                style: .warning,
-                icon: "exclamationmark.triangle.fill",
-                presets: [],
-                extras: ["立即授权"])
-            pendingAlertInFlight = false
+        let canExtend = delayedBlockRetryCount < 1
+        let subtitle = "到点未成功开启屏蔽，请选择。" + (canExtend ? "（还可延长 1 次）" : "（延长次数已用完）")
+        let presets: [(String, Int)] = canExtend
+            ? [("再等 5 分钟", 5), ("再等 10 分钟", 10)]
+            : []
+
+        let result = PromptPanelPresenter.run(PromptPanelConfig(
+            title: "屏蔽未生效",
+            icon: "exclamationmark.triangle.fill",
+            section1Title: "授权需要确认",
+            message: subtitle,
+            subtitle: "上一次系统授权没有完成",
+            tone: .danger,
+            presets: presets,
+            actionItems: actionPrompts.filter { $0.text != "暂停一下" },
+            textItems: textPrompts,
+            primaryTitle: "立即授权",
+            durationConfirmTitle: canExtend ? "确认延长" : nil,
+            showPause: false
+        ))
+
+        switch result.choice {
+        case .preset(let minutes):
+            extendDelayedBlock(minutes: minutes)
+        case .custom(let minutes) where minutes > 0:
+            extendDelayedBlock(minutes: minutes)
+        case .pause:
+            break
+        default:
             retryDelayedBlockNow()
         }
 
-        // If still pending after handling, schedule 30s re-pop
+        // If still pending after handling, schedule the 30s re-pop.
         if delayedBlockPendingAuth {
             scheduleNextPendingAlert()
         }
@@ -1117,6 +1154,16 @@ class AppState: ObservableObject {
         pendingAlertTask?.cancel()
         pendingAlertTask = nil
         delayedBlockNextRetryAt = nil
+    }
+
+    /// Pending-auth alerts restored at launch must wait until AppKit has finished setup.
+    private func scheduleStartupPendingAlert() {
+        pendingAlertTask?.cancel()
+        pendingAlertTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.presentExtendAlert()
+        }
     }
 
     func save() async -> Bool {
@@ -1180,7 +1227,7 @@ class AppState: ObservableObject {
 
     func enableBlocking() async {
         // Install helper if not already installed (one-time admin prompt)
-        if !helperInstalled && !helperInstallAttempted {
+        if (!helperInstalled || helperNeedsRepair) && !helperInstallAttempted {
             helperInstallAttempted = true
 
             // Show explanation before the admin prompt
@@ -1197,13 +1244,16 @@ class AppState: ObservableObject {
                 if ok {
                     for i in 0..<3 {
                         try? await Task.sleep(for: .seconds(1))
-                        helperInstalled = await HelperConnection.shared.forceProbe()
-                        if helperInstalled { break }
+                        let running = await HelperConnection.shared.forceProbe()
+                        helperInstalled = running
+                        helperNeedsRepair = running && !HelperInstaller.tokenPermissionsAreSecure()
+                        if running && !helperNeedsRepair { break }
                         FocusLogger.info("Helper probe retry \(i+1)/3 failed")
                     }
-                    if !helperInstalled {
-                        FocusLogger.info("Helper installed but probe failed after retries — will retry later")
+                    if !helperInstalled || helperNeedsRepair {
+                        FocusLogger.info("Helper installed but probe/permission check failed after retries")
                         helperInstallAttempted = false
+                        lastError = "后台助手安装后仍需修复，请稍后重试。"
                     }
                 } else {
                     FocusLogger.info("Helper install failed — falling back to per-op osascript")
@@ -1237,12 +1287,16 @@ class AppState: ObservableObject {
             blockingEnabled = true
             appBlocker.setBlockingEnabled(true)
         }
+        await appBlocker.enforceNow()
         isProcessing = false
         onBlockingStateChanged?()
         restartReminderIfNeeded()
         _ = await save()
         startBlockingCooldown()
         presentFocusTimerReminder()
+        // Another pass after the reminder closes covers apps the user reopened
+        // while the modal was on screen.
+        await appBlocker.enforceNow()
     }
 
     /// Start the cooldown timer after blocking is enabled (if enabled in settings).
@@ -1310,7 +1364,7 @@ class AppState: ObservableObject {
             return
         }
         // 定时屏蔽硬锁窗口内：点停止 → 只提示，退出需到「计时模式 → 定时屏蔽」页走紧急退出。
-        if isScheduledLockActive {
+        if blockingEnabled && isScheduledLockActive {
             lastError = "定时屏蔽中，请在「计时模式 → 定时屏蔽」页面使用紧急退出"
             return
         }
@@ -1346,20 +1400,24 @@ class AppState: ObservableObject {
     }
 
     func installHelper() async {
-        guard !helperInstalled else { return }
+        guard !isInstallingHelper else { return }
+        guard !helperInstalled || helperNeedsRepair else { return }
         helperInstallAttempted = true
         isInstallingHelper = true
         let ok = await HelperInstaller.install()
         if ok {
             for i in 0..<3 {
                 try? await Task.sleep(for: .seconds(1))
-                helperInstalled = await HelperConnection.shared.forceProbe()
-                if helperInstalled { break }
+                let running = await HelperConnection.shared.forceProbe()
+                helperInstalled = running
+                helperNeedsRepair = running && !HelperInstaller.tokenPermissionsAreSecure()
+                if running && !helperNeedsRepair { break }
                 FocusLogger.info("Helper probe retry \(i+1)/3 failed")
             }
-            if !helperInstalled {
-                FocusLogger.info("Helper installed but probe failed after retries")
+            if !helperInstalled || helperNeedsRepair {
+                FocusLogger.info("Helper installed but probe/permission check failed after retries")
                 helperInstallAttempted = false
+                lastError = "后台助手安装后仍需修复，请稍后重试。"
             }
         } else {
             FocusLogger.info("Helper install failed")

@@ -3,6 +3,8 @@ import SwiftUI
 struct AppListView: View {
     @ObservedObject var state: AppState
     @State private var newApp = ""
+    @State private var showAppPicker = false
+    @State private var isLoadingApps = false
     @State private var pickerApps: [String]? = nil
     @State private var revertingRuleID: UUID? = nil
     @State private var pendingDeleteID: UUID? = nil
@@ -21,11 +23,20 @@ struct AppListView: View {
                 Button("添加", action: addApp)
                     .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                     .disabled(newApp.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button(action: loadInstalledApps) {
-                    Label("选择", systemImage: "list.bullet")
-                        .font(.body)
+                Button {
+                    showAppPicker = true
+                    loadInstalledApps()
+                } label: {
+                    if isLoadingApps {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("选择", systemImage: "list.bullet")
+                            .font(.body)
+                    }
                 }
                 .buttonStyle(AlwaysActiveBorderlessStyle(color: .focusAccent))
+                .disabled(isLoadingApps)
                 .help("从已安装 App 中选择")
             }
             Text("屏蔽开启后，这些 App 会被强制关闭。")
@@ -38,7 +49,7 @@ struct AppListView: View {
                 emptyView
             } else {
                 ScrollView {
-                    VStack(spacing: 0) {
+                    VStack(spacing: 8) {
                         ForEach($state.blockRules) { $rule in
                             if rule.type == .app {
                                 appRow($rule)
@@ -48,56 +59,77 @@ struct AppListView: View {
                 }
             }
         }
-        .sheet(item: Binding(
-            get: { pickerApps.map { AppPickerItem(apps: $0) } },
-            set: { if $0 == nil { pickerApps = nil } }
-        )) { item in
+        .sheet(isPresented: $showAppPicker) {
             VStack(spacing: 12) {
                 HStack {
                     Text("选择要屏蔽的 App")
                         .font(.headline)
                     Spacer()
-                    Text("\(item.apps.count) 个")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if item.apps.isEmpty {
-                    Spacer()
-                    VStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.tertiary)
-                        Text("未找到已安装应用")
-                            .font(.subheadline)
-                            .foregroundStyle(.tertiary)
-                        Text("请手动输入 App 名称添加")
+                    if let apps = pickerApps, !isLoadingApps {
+                        Text("\(apps.count) 个")
                             .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if isLoadingApps {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("正在读取已安装 App…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                     Spacer()
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 8) {
-                            ForEach(item.apps, id: \.self) { appName in
-                                Button(appName) {
-                                    addFromPicker(appName)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 8)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                            }
+                } else if let apps = pickerApps {
+                    if apps.isEmpty {
+                        Spacer()
+                        VStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 32))
+                                .foregroundStyle(.tertiary)
+                            Text("未找到已安装应用")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                            Text("请手动输入 App 名称添加")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                                ForEach(apps, id: \.self) { appName in
+                                    Button {
+                                        addFromPicker(appName)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            appIcon(for: appName)
+                                                .frame(width: 20, height: 20)
+                                            Text(appName)
+                                                .font(.subheadline)
+                                                .lineLimit(1)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                        }
+                                        .padding(.vertical, 7)
+                                        .padding(.horizontal, 8)
+                                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .frame(minHeight: 250)
                     }
-                    .frame(minHeight: 250)
                 }
                 HStack {
                     Spacer()
-                    Button("关闭") { pickerApps = nil }
+                    Button("关闭") { showAppPicker = false }
                 }
             }
             .padding()
-            .frame(width: 500, height: 420)
+            .frame(width: 520, height: 440)
         }
         .alert("删除条目？", isPresented: Binding(
             get: { pendingDeleteID != nil },
@@ -175,8 +207,9 @@ struct AppListView: View {
             }
             .buttonStyle(AlwaysActiveBorderlessStyle())
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
         .onChange(of: rule.enabled.wrappedValue) { oldValue, newState in
             if revertingRuleID == r.id {
                 revertingRuleID = nil
@@ -211,14 +244,27 @@ struct AppListView: View {
                 }
             }
         }
-        Divider()
-            .padding(.leading, 28)
     }
 
     @ViewBuilder
     private func appIcon(for name: String) -> some View {
-        Image(systemName: "app.badge")
-            .foregroundStyle(.secondary)
+        let homeApps = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Applications/\(name).app").path
+        let candidates = [
+            "/Applications/\(name).app",
+            "/System/Applications/\(name).app",
+            homeApps
+        ]
+        let path = candidates.first { FileManager.default.fileExists(atPath: $0) }
+        if let path {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: path))
+                .resizable()
+                .frame(width: 22, height: 22)
+        } else {
+            Image(systemName: "app.badge")
+                .foregroundStyle(.secondary)
+                .frame(width: 22, height: 22)
+        }
     }
 
     func addApp() {
@@ -245,6 +291,28 @@ struct AppListView: View {
     }
 
     func loadInstalledApps() {
+        guard !isLoadingApps else { return }
+        isLoadingApps = true
+        pickerApps = nil
+
+        Task.detached(priority: .userInitiated) {
+            let result = Self.scanInstalledApps()
+            await MainActor.run {
+                pickerApps = result.apps
+                isLoadingApps = false
+                if !result.diagnostics.isEmpty && result.apps.isEmpty {
+                    state.lastError = "应用枚举失败：\(result.diagnostics.prefix(3).joined(separator: " | "))"
+                }
+            }
+        }
+    }
+
+    private struct AppScanResult {
+        let apps: [String]
+        let diagnostics: [String]
+    }
+
+    nonisolated private static func scanInstalledApps() -> AppScanResult {
         var names: Set<String> = []
         var diagnostics: [String] = []
 
@@ -254,7 +322,6 @@ struct AppListView: View {
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications").path
         ]
 
-        // Strategy 1: FileManager.contentsOfDirectory
         for dir in dirs {
             do {
                 let items = try FileManager.default.contentsOfDirectory(atPath: dir)
@@ -267,30 +334,24 @@ struct AppListView: View {
             }
         }
 
-        // Strategy 2: ls fallback if FileManager returned nothing
         if names.isEmpty {
             for dir in dirs {
                 let apps = listAppNamesViaLS(in: dir)
                 if apps.isEmpty {
                     diagnostics.append("ls \(dir): empty or failed")
                 } else {
-                    for a in apps where !a.isEmpty { names.insert(a) }
+                    for app in apps where !app.isEmpty { names.insert(app) }
                 }
             }
         }
 
         let exclusions = Set(["FocusPause", "Finder", "System Settings", "System Preferences", "登录窗口"])
         let filtered = names.filter { !exclusions.contains($0) }.sorted()
-
-        FocusLogger.info("loadInstalledApps: found \(filtered.count) apps; diagnostics: \(diagnostics.isEmpty ? "none" : diagnostics.joined(separator: " | "))")
-
-        if filtered.isEmpty && !diagnostics.isEmpty {
-            state.lastError = "应用枚举失败：\(diagnostics.prefix(3).joined(separator: " | "))"
-        }
-        pickerApps = filtered
+        FocusLogger.info("Installed app scan: found \(filtered.count) apps")
+        return AppScanResult(apps: filtered, diagnostics: diagnostics)
     }
 
-    private func listAppNamesViaLS(in dir: String) -> [String] {
+    private nonisolated static func listAppNamesViaLS(in dir: String) -> [String] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ls")
         task.arguments = ["-1", dir]
@@ -309,9 +370,4 @@ struct AppListView: View {
             return []
         }
     }
-}
-
-private struct AppPickerItem: Identifiable {
-    let id = UUID()
-    let apps: [String]
 }

@@ -24,17 +24,48 @@ final class PanelResult {
     var goal = ""
 }
 
+/// 弹窗语义：普通提醒 / 需要注意 / 授权或屏蔽到期等高风险状态。
+enum PromptPanelTone {
+    case normal
+    case warning
+    case danger
+
+    var color: Color {
+        switch self {
+        case .normal: return .focusAccent
+        case .warning: return .orange
+        case .danger: return .focusDanger
+        }
+    }
+
+    var badge: String {
+        switch self {
+        case .normal: return "提醒"
+        case .warning: return "注意"
+        case .danger: return "待处理"
+        }
+    }
+}
+
 struct PromptPanelConfig {
     var title: String
     var icon: String
     var section1Title: String
     var message: String
+    var subtitle: String? = nil
+    var tone: PromptPanelTone = .normal
     var presets: [(String, Int)] = []
     var showGoal = false
     var goalPlaceholder: String? = nil
     var actionItems: [PromptItem] = []
     var textItems: [PromptItem] = []
     var primaryTitle = "确定"
+    /// 独立主按钮颜色；不填则跟随弹窗语义色。
+    var primaryTint: Color? = nil
+    /// 主按钮独立区域时的辅助说明，例如「不需要延长？」。
+    var primaryHint: String? = nil
+    /// 显式的时长确认按钮。提供后，预设/自定义选择必须点它确认；primaryTitle 保持独立动作。
+    var durationConfirmTitle: String? = nil
     /// 「倒计时 / 正计时」模式切换（显示在版块顶部）。开启后正计时隐藏时长、主按钮文案用 elapsedPrimaryTitle。
     var showModePicker = false
     /// 正计时时主按钮文案（默认「开始正计时」）。
@@ -43,6 +74,9 @@ struct PromptPanelConfig {
     var sectionActionTitle: String? = nil
     var secondaryTitle: String? = nil
     var tertiaryTitle: String? = nil
+    /// 是否显示「暂停一下」；待授权且延长次数用完时可隐藏，优先完成授权。
+    var showPause = true
+    var pauseHint: String? = nil
 }
 
 struct PracticePromptPanel: View {
@@ -55,8 +89,6 @@ struct PracticePromptPanel: View {
     @State private var toastGeneration = 0
     @State private var textHintIndex = 0
     @State private var elapsedMode = false
-    @FocusState private var goalFocused: Bool
-    @FocusState private var minutesFocused: Bool
 
     private enum DurationSel {
         case preset(Int)
@@ -73,170 +105,199 @@ struct PracticePromptPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
             section1
-            pauseSection
+            if config.durationConfirmTitle != nil {
+                primaryActionSection
+            }
             if !config.actionItems.isEmpty {
                 hintsSection
             }
             if !config.textItems.isEmpty {
                 textHintSection
             }
+            if config.showPause {
+                pauseSection
+            }
             footer
         }
-        .padding(16)
-        .frame(width: 380, alignment: .top)
+        .padding(18)
+        .frame(width: 390, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             pickRandomTextHint(forceDifferent: false)
-            // 有事件输入框时自动聚焦，打开就能看见光标、直接输入，避免「点不到/没光标」。
             if config.showGoal {
-                DispatchQueue.main.async { goalFocused = true }
+                // DialogTextField requests AppKit first-responder status after it is mounted.
             }
         }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Image(systemName: config.icon)
-                .font(.system(size: 24))
-                .foregroundStyle(Color.focusAccent)
-            Text(config.title)
-                .font(.title3.weight(.semibold))
+        VStack(spacing: 12) {
+            DialogHeader(
+                title: config.title,
+                icon: config.icon,
+                tint: config.tone.color,
+                subtitle: config.subtitle
+            )
+            HStack {
+                Label(config.tone.badge, systemImage: "circle.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(config.tone.color)
+                    .labelStyle(.titleAndIcon)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(config.tone.color.opacity(0.10), in: Capsule())
+                Spacer()
+            }
         }
     }
-
-    // MARK: - 版块 1：专注计时 / 延时屏蔽
 
     private var section1: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(config.section1Title)
-                .font(.headline)
-            Text(config.message)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // 「倒计时 / 正计时」模式切换（与主页面一致）；正计时隐藏时长、事件输入仍共用。
-            if config.showModePicker {
-                Picker("模式", selection: $elapsedMode) {
-                    Text("倒计时").tag(false)
-                    Text("正计时").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 240)
-            }
-
-            if config.showModePicker && elapsedMode {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("不限时专注")
-                        .font(.subheadline.weight(.semibold))
-                    Text("向下累计时长，自己决定何时结束；结束时需密码，不占用紧急退出次数。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if !config.presets.isEmpty {
-                Text("预设时间")
+        SectionCard(title: config.section1Title, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(config.message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    ForEach(config.presets, id: \.1) { preset in
-                        Button {
-                            duration = .preset(preset.1)
-                        } label: {
-                            Text(preset.0)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 5)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if config.showModePicker {
+                    Picker("模式", selection: $elapsedMode) {
+                        Text("倒计时").tag(false)
+                        Text("正计时").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 250)
+                }
+
+                if config.showModePicker && elapsedMode {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("不限时专注")
+                            .font(.subheadline.weight(.semibold))
+                        Text("向下累计时长，自己决定何时结束；结束时需密码，不占用紧急退出次数。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if !config.presets.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("预设时间")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            ForEach(config.presets, id: \.1) { preset in
+                                Button {
+                                    duration = .preset(preset.1)
+                                } label: {
+                                    Text(preset.0)
+                                        .frame(maxWidth: .infinity, minHeight: 28)
+                                }
+                                .buttonStyle(AlwaysActiveButtonStyle(
+                                    color: selectedPreset == preset.1 ? .focusActive : .gray
+                                ))
+                            }
                         }
-                        .buttonStyle(AlwaysActiveButtonStyle(
-                            color: selectedPreset == preset.1 ? .focusActive : .gray))
+
+                        HStack {
+                            Text("自定义时间")
+                                .font(.subheadline)
+                            Spacer()
+                            DialogNumberField(number: Binding(
+                                get: { customBinding.wrappedValue },
+                                set: { duration = .custom(max(1, $0)) }
+                            ),
+                            alignment: .right
+                            )
+                                .frame(width: 68)
+                            Text("分钟")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
-                HStack {
-                    Text("自定义时间")
-                        .font(.subheadline)
-                    Spacer()
-                    TextField("", value: customBinding, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .multilineTextAlignment(.trailing)
-                        .frame(width: 52)
-                        .focused($minutesFocused)
-                    Text("分钟")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                if config.showGoal {
+                    DialogTextField(
+                        text: $goal,
+                        placeholder: config.goalPlaceholder ?? "",
+                        autoFocus: true
+                    )
                 }
-            }
 
-            if config.showGoal {
-                TextField(config.goalPlaceholder ?? "", text: $goal, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...3)
-                    .focused($goalFocused)
-            }
-
-            // 主按钮（开始 / 立即开启 / 开始正计时）放在本版块，包内容、居中
-            HStack {
-                Spacer()
-                Button {
-                    result.goal = goal
-                    result.choice = primaryChoice
-                    dismiss()
-                } label: {
-                    Text(primaryButtonTitle)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 10)
-                }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
-                Spacer()
-            }
-
-            // 版块内第二个动作（如「立即屏蔽」），返回 .sectionAction——描边样式，与「暂停一下」区分。
-            if let sectionActionTitle = config.sectionActionTitle {
-                HStack {
-                    Spacer()
-                    Button {
-                        result.goal = goal
-                        result.choice = .sectionAction
-                        dismiss()
-                    } label: {
-                        Text(sectionActionTitle)
-                            .padding(.vertical, 5)
-                            .padding(.horizontal, 8)
+                if config.durationConfirmTitle == nil {
+                    HStack {
+                        Spacer()
+                        Button {
+                            result.goal = goal
+                            result.choice = primaryChoice
+                            dismiss()
+                        } label: {
+                            Text(primaryButtonTitle)
+                                .frame(minWidth: 118, minHeight: 30)
+                        }
+                        .buttonStyle(AlwaysActiveButtonStyle(color: config.tone.color))
+                        .help(primaryButtonTitle)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(Color.focusActive)
-                    Spacer()
+                } else if let durationConfirmTitle = config.durationConfirmTitle {
+                    HStack {
+                        Spacer()
+                        Button {
+                            confirmDuration()
+                        } label: {
+                            Label(durationConfirmTitle, systemImage: "checkmark.circle.fill")
+                                .frame(minWidth: 132, minHeight: 30)
+                        }
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                        .help(durationConfirmTitle)
+                    }
+                }
+
+                if let sectionActionTitle = config.sectionActionTitle {
+                    HStack {
+                        Spacer()
+                        Button {
+                            result.goal = goal
+                            result.choice = .sectionAction
+                            dismiss()
+                        } label: {
+                            Text(sectionActionTitle)
+                                .padding(.vertical, 5)
+                                .padding(.horizontal, 10)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(Color.focusActive)
+                    }
                 }
             }
         }
-        .focusCard()
     }
 
-    // MARK: - 版块 2：暂停一下
-
-    private var pauseSection: some View {
-        HStack {
+    private var primaryActionSection: some View {
+        HStack(spacing: 12) {
+            if let primaryHint = config.primaryHint {
+                Text(primaryHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             Button {
-                result.choice = .pause
+                result.goal = goal
+                result.choice = .primary
                 dismiss()
             } label: {
-                Label("暂停一下", systemImage: "pause.circle.fill")
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
+                Text(primaryButtonTitle)
+                    .frame(minWidth: 108, minHeight: 30)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
-            Spacer()
+            .buttonStyle(AlwaysActiveButtonStyle(color: config.primaryTint ?? config.tone.color))
+            .help(primaryButtonTitle)
         }
+        .padding(.top, -2)
     }
 
-    // MARK: - 版块 3：提示去做
-
     private var hintsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("一些提醒")
-                .font(.headline)
+        SectionCard(title: "一些提醒", icon: "bell.fill", spacing: 8) {
             FlowLayout(spacing: 6) {
                 ForEach(config.actionItems) { item in
                     Button {
@@ -244,19 +305,20 @@ struct PracticePromptPanel: View {
                     } label: {
                         HStack(spacing: 5) {
                             Image(systemName: "hand.point.right")
-                                .font(.system(size: 13))
+                                .font(.system(size: 12))
                                 .foregroundStyle(Color.focusAccent)
                             Text(item.text)
                                 .font(.body)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
                         .background(Color.secondary.opacity(0.10), in: Capsule())
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                 }
             }
+
             if let toast {
                 Text(toast)
                     .font(.caption)
@@ -264,31 +326,53 @@ struct PracticePromptPanel: View {
                     .transition(.opacity)
             }
         }
-        .focusCard()
     }
 
-    // MARK: - 底部文字提示（随机一句，可点击换下一句）
+    private var pauseSection: some View {
+        VStack(spacing: 8) {
+            Button {
+                result.goal = goal
+                result.choice = .pause
+                dismiss()
+            } label: {
+                Label("暂停一下", systemImage: "pause.circle.fill")
+                    .frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+
+            if let pauseHint = config.pauseHint {
+                Text(pauseHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
 
     private var textHintSection: some View {
         Button {
             pickRandomTextHint(forceDifferent: true)
         } label: {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "quote.opening")
                     .foregroundStyle(Color.focusAccent)
+                    .padding(.top, 1)
                 Text("「\(config.textItems[textHintIndex].text)」")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Image(systemName: "shuffle")
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
             }
             .font(.body)
             .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .help("换一句")
@@ -301,7 +385,6 @@ struct PracticePromptPanel: View {
         withAnimation(.easeOut(duration: 0.15)) { toast = message }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.8))
-            // 只有最新一次点击的 Task 才清除，避免连点导致旧 Task 提前清掉新提示
             guard toastGeneration == generation else { return }
             withAnimation(.easeIn(duration: 0.2)) { toast = nil }
         }
@@ -318,8 +401,6 @@ struct PracticePromptPanel: View {
             textHintIndex = next
         }
     }
-
-    // MARK: - 底部按钮
 
     private var footer: some View {
         HStack(spacing: 10) {
@@ -349,7 +430,6 @@ struct PracticePromptPanel: View {
         return nil
     }
 
-    /// 数字框显示当前选中的时长（预设或自定义都跟随），输入即切换为自定义。
     private var customMinutes: Int {
         switch duration {
         case .preset(let minutes): return minutes
@@ -360,18 +440,30 @@ struct PracticePromptPanel: View {
     private var customBinding: Binding<Int> {
         Binding(
             get: { customMinutes },
-            set: { duration = .custom($0) }
+            set: { duration = .custom(max(1, $0)) }
         )
     }
 
     private var primaryChoice: PanelChoice {
+        // 显式确认模式下，主按钮不再隐式采用当前选中的时长，避免“点了 5 分钟却按成立即屏蔽”。
+        if config.durationConfirmTitle != nil { return .primary }
         if config.showModePicker && elapsedMode { return .elapsed }
         guard !config.presets.isEmpty else { return .primary }
         if case .preset(let minutes) = duration { return .preset(minutes) }
         return .custom(customMinutes)
     }
 
-    /// 主按钮文案：正计时模式用「开始正计时」，否则用 config.primaryTitle。
+    private var selectedDurationChoice: PanelChoice {
+        if case .preset(let minutes) = duration { return .preset(minutes) }
+        return .custom(customMinutes)
+    }
+
+    private func confirmDuration() {
+        result.goal = goal
+        result.choice = selectedDurationChoice
+        dismiss()
+    }
+
     private var primaryButtonTitle: String {
         if config.showModePicker && elapsedMode {
             return config.elapsedPrimaryTitle ?? "开始正计时"

@@ -79,7 +79,6 @@ struct FocusTimerView: View {
 
             if focusMode == .countdown {
                 presetAndCustomView(minutes: $focusCustomMinutes)
-                    .focusCard()
 
                 goalInputCard(
                     title: "这次想专注完成什么？",
@@ -165,7 +164,6 @@ struct FocusTimerView: View {
                     .background(Color.focusDanger.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             } else {
                 presetAndCustomView(minutes: $delayedCustomMinutes)
-                    .focusCard()
 
                 goalInputCard(
                     title: "这段时间想做什么？",
@@ -462,6 +460,7 @@ struct FocusTimerView: View {
     /// 延时屏蔽页：到期锁屏 / 允许延长（原在设置里）。
     @ViewBuilder
     private var delayedBlockOptionsCard: some View {
+        SectionCard(title: "延时选项", icon: "switch.2") {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: Binding(
                 get: { state.delayedBlockLockScreen },
@@ -499,12 +498,13 @@ struct FocusTimerView: View {
             }
             .toggleStyle(.switch)
         }
-        .focusCard()
+        }
     }
 
     /// 专注计时页选项卡：悬浮窗是否显示倒计时 + 结束后提醒（原在设置里）。
     @ViewBuilder
     private var focusOptionsCard: some View {
+        SectionCard(title: "专注选项", icon: "switch.2") {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: Binding(
                 get: { state.focusOverlayShowsTime },
@@ -540,13 +540,11 @@ struct FocusTimerView: View {
             }
             .toggleStyle(.switch)
         }
-        .focusCard()
+        }
     }
 
     private func goalInputCard(title: String, placeholder: String, hint: String, text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.headline)
+        SectionCard(title: title, icon: "target", spacing: 8) {
             TextField(placeholder, text: text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
@@ -554,7 +552,6 @@ struct FocusTimerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .focusCard()
     }
 
     /// A compact read-only card showing the current session goal/plan.
@@ -572,6 +569,7 @@ struct FocusTimerView: View {
 
     @ViewBuilder
     private func presetAndCustomView(minutes: Binding<Int>) -> some View {
+        SectionCard(title: "时长设置", icon: "clock", subtitle: "选择预设，或输入 1–480 分钟。") {
         VStack(alignment: .leading, spacing: 8) {
             Text("预设时长")
                 .font(.headline)
@@ -600,73 +598,99 @@ struct FocusTimerView: View {
                 Spacer()
             }
         }
+        }
     }
 
     @ViewBuilder
     private var focusRunningView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(Color.focusActive)
-            Text(state.isElapsedFocus ? "正计时中" : "专注计时中")
-                .font(.title2.bold())
+        VStack(spacing: 18) {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                if state.isElapsedFocus {
-                    Text(elapsedString(context.date))
-                        .font(.system(size: 56, weight: .light, design: .monospaced))
-                        .monospacedDigit()
-                } else {
-                    Text(countdownString(at: context.date, end: state.focusTimerEnd))
-                        .font(.system(size: 56, weight: .light, design: .monospaced))
-                        .monospacedDigit()
+                let progress = focusProgress(at: context.date)
+                ZStack {
+                    Circle()
+                        .stroke(Color.focusActive.opacity(0.14), lineWidth: 10)
+
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(
+                            Color.focusActive,
+                            style: StrokeStyle(lineWidth: 10, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeOut(duration: 0.25), value: progress)
+
+                    VStack(spacing: 6) {
+                        Text(state.isElapsedFocus ? "正计时" : "剩余")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if state.isElapsedFocus {
+                            Text(elapsedString(context.date))
+                                .font(.system(size: 46, weight: .light, design: .monospaced))
+                                .monospacedDigit()
+                        } else {
+                            Text(countdownString(at: context.date, end: state.focusTimerEnd))
+                                .font(.system(size: 46, weight: .light, design: .monospaced))
+                                .monospacedDigit()
+                        }
+                    }
                 }
+                .frame(width: 228, height: 228)
             }
-            Text("所有屏蔽设置已锁定")
-                .font(.caption)
+
+            Text(state.isElapsedFocus ? "屏蔽设置已锁定 · 结束需密码" : "屏蔽设置已锁定")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if state.isElapsedFocus {
-                Text("正计时：无结束时间，需手动结束")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
 
             if let goal = state.focusTimerGoal, !goal.isEmpty {
                 goalDisplayCard(goal)
             }
 
-            if state.isElapsedFocus {
-                VStack(spacing: 6) {
-                    Text("结束需输入密码，不占用紧急退出次数")
-                        .font(.subheadline)
-                }
-                .focusCard()
-                Button {
-                    state.requestEndElapsedFocus()
-                } label: {
-                    Label("结束正计时", systemImage: "xmark.shield")
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-            } else {
-                VStack(spacing: 6) {
-                    Text("本月紧急退出剩余 \(max(0, state.emergencyQuota - state.emergencyUsesThisMonth)) 次")
-                        .font(.subheadline)
-                    Text("紧急退出需输入密码，且每月最多 \(state.emergencyQuota) 次")
+            VStack(spacing: 10) {
+                if state.isElapsedFocus {
+                    Text("结束不占用紧急退出次数")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button {
+                        state.requestEndElapsedFocus()
+                    } label: {
+                        Label("结束正计时", systemImage: "xmark.shield")
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+                } else {
+                    Text("紧急退出剩余 \(max(0, state.emergencyQuota - state.emergencyUsesThisMonth)) 次")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        state.showEmergencyOverrideSheet = true
+                    } label: {
+                        Label("紧急退出", systemImage: "xmark.shield")
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+                    .disabled(state.emergencyUsesThisMonth >= state.emergencyQuota)
                 }
-                .focusCard()
-                Button {
-                    state.showEmergencyOverrideSheet = true
-                } label: {
-                    Label("紧急退出", systemImage: "xmark.shield")
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-                .disabled(state.emergencyUsesThisMonth >= state.emergencyQuota)
             }
+            .padding(.top, 2)
         }
-        .padding()
+        .padding(.vertical, 18)
+    }
+
+    private func focusProgress(at date: Date) -> Double {
+        // Elapsed focus has no target duration; show an empty ring instead of pretending it completed.
+        guard !state.isElapsedFocus,
+              let start = state.focusCountdownStart,
+              let end = state.focusTimerEnd else {
+            return 0
+        }
+
+        let total = end.timeIntervalSince(start)
+        guard total > 0 else { return 1 }
+
+        let elapsed = date.timeIntervalSince(start)
+        return min(1, max(0, elapsed / total))
     }
 
     /// 正计时已用时（HH:MM:SS）。

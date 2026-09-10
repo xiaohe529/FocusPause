@@ -13,24 +13,38 @@ final class HelperConnection: @unchecked Sendable {
 
     // MARK: - Public API
 
-    func executePrivileged(_ command: String) async -> (Bool, String) {
-        if await probe() {
-            if let result = await callHelper(command: command) {
-                return result
+    func applyHosts(domains: [String]) async -> (success: Bool, output: String) {
+        await call { proxy, continuation in
+            proxy.applyHosts(Self.readToken(), domains: domains) { ok, output in
+                continuation(ok, output)
             }
         }
-        return await legacyOSA(command)
+    }
+
+    func clearHosts() async -> (success: Bool, output: String) {
+        await call { proxy, continuation in
+            proxy.clearHosts(Self.readToken()) { ok, output in
+                continuation(ok, output)
+            }
+        }
+    }
+
+    func setDNSServers(service: String, servers: [String]) async -> (success: Bool, output: String) {
+        await call { proxy, continuation in
+            proxy.setDNSServers(Self.readToken(), service: service, servers: servers) { ok, output in
+                continuation(ok, output)
+            }
+        }
     }
 
     // MARK: - Probe
 
     func probe() async -> Bool {
         let now = Date()
-        let (cached, stale) = queue.sync { () -> (Bool, Bool) in
-            let stale = now.timeIntervalSince(lastProbeTime) > 30
-            return (lastProbeResult, stale)
+        let (cachedResult, isStale) = queue.sync { () -> (Bool, Bool) in
+            (lastProbeResult, now.timeIntervalSince(lastProbeTime) > 30)
         }
-        if !stale { return cached }
+        if !isStale { return cachedResult }
 
         let ok = await pingHelper()
         queue.sync {
@@ -40,7 +54,6 @@ final class HelperConnection: @unchecked Sendable {
         return ok
     }
 
-    /// Force a re-probe, bypassing the cache. Used after install.
     func forceProbe() async -> Bool {
         let ok = await pingHelper()
         queue.sync {
@@ -50,21 +63,31 @@ final class HelperConnection: @unchecked Sendable {
         return ok
     }
 
-    // MARK: - XPC connection
+    // MARK: - XPC calls
 
-    private func ensureConnection() -> NSXPCConnection? {
-        if let conn = queue.sync(execute: { connection }) {
-            return conn
+    private func call(
+        _ operation: @escaping @Sendable (HelperProtocol, @escaping @Sendable (Bool, String) -> Void) -> Void
+    ) async -> (success: Bool, output: String) {
+        guard await probe(), let conn = ensureConnection() else {
+            return (false, "FocusPause helper unavailable")
         }
-        let conn = NSXPCConnection(machServiceName: HelperConstants.machServiceName,
-                                   options: [])
-        conn.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
-        conn.invalidationHandler = { [weak self] in
-            self?.queue.sync { self?.connection = nil }
+
+        return await withCheckedContinuation { continuation in
+            let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
+                FocusLogger.error("HelperConnection: XPC call failed: \(error)")
+                self?.markConnectionInvalid()
+                continuation.resume(returning: (false, "FocusPause helper connection failed"))
+            } as? HelperProtocol
+
+            guard let proxy else {
+                continuation.resume(returning: (false, "FocusPause helper interface unavailable"))
+                return
+            }
+
+            operation(proxy) { ok, output in
+                continuation.resume(returning: (ok, output))
+            }
         }
-        conn.resume()
-        queue.sync { connection = conn }
-        return conn
     }
 
     private func pingHelper() async -> Bool {
@@ -72,40 +95,60 @@ final class HelperConnection: @unchecked Sendable {
             FocusLogger.error("HelperConnection: ensureConnection returned nil")
             return false
         }
-        return await withCheckedContinuation { cont in
-            let proxy = conn.remoteObjectProxyWithErrorHandler { err in
-                FocusLogger.error("HelperConnection: XPC error handler called: \(err)")
-                cont.resume(returning: false)
-            } as! HelperProtocol
-            proxy.ping("") { ok, msg in
-                if !ok {
-                    FocusLogger.error("HelperConnection: ping returned ok=false, msg=\(msg)")
-                    cont.resume(returning: false)
+
+        return await withCheckedContinuation { continuation in
+            let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
+                FocusLogger.error("HelperConnection: XPC probe failed: \(error)")
+                self?.markConnectionInvalid()
+                continuation.resume(returning: false)
+            } as? HelperProtocol
+
+            guard let proxy else {
+                continuation.resume(returning: false)
+                return
+            }
+
+            proxy.ping(Self.readToken()) { ok, message in
+                guard ok else {
+                    FocusLogger.error("HelperConnection: ping failed: \(message)")
+                    continuation.resume(returning: false)
                     return
                 }
-                let token = Self.readToken()
-                if token.isEmpty {
-                    FocusLogger.error("HelperConnection: readToken returned empty string")
+                guard message == "FocusPauseHelper v1.1" else {
+                    FocusLogger.error("HelperConnection: incompatible helper protocol: \(message)")
+                    self.markConnectionInvalid()
+                    continuation.resume(returning: false)
+                    return
                 }
-                proxy.verifyToken(token) { tokenOk in
-                    if !tokenOk {
-                        FocusLogger.error("HelperConnection: verifyToken failed — token mismatch")
-                    }
-                    cont.resume(returning: tokenOk)
-                }
+                continuation.resume(returning: true)
             }
         }
     }
 
-    private func callHelper(command: String) async -> (Bool, String)? {
-        guard let conn = ensureConnection() else { return nil }
-        return await withCheckedContinuation { cont in
-            let proxy = conn.remoteObjectProxyWithErrorHandler { _ in
-                cont.resume(returning: nil)
-            } as! HelperProtocol
-            proxy.executeCommand(command) { ok, out in
-                cont.resume(returning: (ok, out))
+    private func ensureConnection() -> NSXPCConnection? {
+        if let existing = queue.sync(execute: { connection }) {
+            return existing
+        }
+
+        let conn = NSXPCConnection(machServiceName: HelperConstants.machServiceName,
+                                   options: [])
+        conn.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
+        conn.invalidationHandler = { [weak self] in
+            self?.queue.async {
+                self?.connection = nil
             }
+        }
+        conn.resume()
+        queue.sync { connection = conn }
+        return conn
+    }
+
+    private func markConnectionInvalid() {
+        queue.async {
+            self.lastProbeResult = false
+            self.lastProbeTime = .distantPast
+            self.connection?.invalidate()
+            self.connection = nil
         }
     }
 
@@ -118,38 +161,5 @@ final class HelperConnection: @unchecked Sendable {
             return ""
         }
         return token
-    }
-
-    // MARK: - Fallback
-
-    private func legacyOSA(_ command: String) async -> (Bool, String) {
-        await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                cont.resume(returning: Self.legacyOSASync(command))
-            }
-        }
-    }
-
-    private static func legacyOSASync(_ command: String) -> (Bool, String) {
-        let escaped = command
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "do shell script \"\(escaped)\" with administrator privileges"
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let out = String(data: data, encoding: .utf8) ?? ""
-            return (proc.terminationStatus == 0,
-                    out.trimmingCharacters(in: .whitespacesAndNewlines))
-        } catch {
-            return (false, error.localizedDescription)
-        }
     }
 }

@@ -1,9 +1,5 @@
 import SwiftUI
 
-enum UnlockField: Hashable {
-    case password
-}
-
 struct MainView: View {
     @ObservedObject var state: AppState
     @State private var passwordInput = ""
@@ -12,10 +8,6 @@ struct MainView: View {
     @State private var emergencyPasswordError = false
     @State private var scheduledExitPasswordInput = ""
     @State private var scheduledExitPasswordError = false
-    @FocusState private var unlockFocus: UnlockField?
-    @FocusState private var emergencyFocus: Bool
-    @FocusState private var scheduledExitFocus: Bool
-
     let tabLabels = ["屏蔽吧！", "计时模式", "暂停一下"]
     let tabIcons = ["shield", "timer", "pause.circle"]
 
@@ -51,131 +43,60 @@ struct MainView: View {
 
             Divider()
 
-            // Status banners (low-key, for focus-timer / delayed-block states)
-            if state.focusTimerActive {
-                if state.isElapsedFocus {
-                    statusBanner(
-                        icon: "lock.fill",
-                        color: .focusActive,
-                        actionTitle: "结束",
-                        actionColor: .focusDanger,
-                        actionDisabled: false,
-                        action: { state.requestEndElapsedFocus() }
-                    ) {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            Text("正计时中 · 已用时 \(elapsedString(context.date, start: state.focusTimerStart))")
-                                .font(.subheadline)
-                                .monospacedDigit()
-                        }
+            // Status banners
+            VStack(spacing: 8) {
+                if state.focusTimerActive {
+                    if state.isElapsedFocus {
+                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "结束", actionColor: .focusDanger) {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text("正计时中 · 已用时 \(elapsedString(context.date, start: state.focusTimerStart))")
+                                    .monospacedDigit()
+                            }
+                        } action: { state.requestEndElapsedFocus() }
+                    } else {
+                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "紧急退出", actionColor: .focusDanger, actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota) {
+                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                                Text("专注计时中 · 剩余 \(remainingString(end: state.focusTimerEnd))")
+                                    .monospacedDigit()
+                            }
+                        } action: { state.showEmergencyOverrideSheet = true }
                     }
-                } else {
-                    statusBanner(
-                        icon: "lock.fill",
-                        color: .focusActive,
-                        actionTitle: "紧急退出",
-                        actionColor: .focusDanger,
-                        actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota,
-                        action: { state.showEmergencyOverrideSheet = true }
-                    ) {
+                } else if state.isScheduledLockActive {
+                    InfoBanner(style: .info, icon: "calendar.badge.clock", actionTitle: "紧急退出", actionColor: .focusDanger, actionDisabled: state.scheduledExitUsesThisMonth >= state.scheduledExitQuota) {
+                        Text("定时屏蔽中 · 本月紧急退出剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth))/\(state.scheduledExitQuota)")
+                            .monospacedDigit()
+                    } action: { state.showScheduledExitSheet = true }
+                } else if state.delayedBlockPendingAuth {
+                    InfoBanner(style: .danger, actionTitle: "去授权") {
+                        Text("屏蔽未生效 · 到点未授权")
+                    } action: { state.selectedTab = 1 }
+                } else if state.delayedBlockActive {
+                    InfoBanner(style: .info, icon: "clock.badge.exclamationmark") {
                         TimelineView(.periodic(from: .now, by: 1)) { _ in
-                            Text("专注计时中 · 剩余 \(remainingString(end: state.focusTimerEnd))")
-                                .font(.subheadline)
+                            Text("延时屏蔽倒计时 · 剩余 \(remainingString(end: state.delayedBlockEnd)) · 到点自动屏蔽")
                                 .monospacedDigit()
                         }
                     }
-                }
-            } else if state.isScheduledLockActive {
-                statusBanner(
-                    icon: "calendar.badge.clock",
-                    color: .focusAccent,
-                    actionTitle: "紧急退出",
-                    actionColor: .focusDanger,
-                    actionDisabled: state.scheduledExitUsesThisMonth >= state.scheduledExitQuota,
-                    action: { state.showScheduledExitSheet = true }
-                ) {
-                    Text("定时屏蔽中 · 本月紧急退出剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth))/\(state.scheduledExitQuota)")
-                        .font(.subheadline)
-                        .monospacedDigit()
-                }
-            } else if state.delayedBlockPendingAuth {
-                statusBanner(
-                    icon: "exclamationmark.triangle.fill",
-                    color: .focusDanger,
-                    actionTitle: "去授权",
-                    actionColor: .focusDanger,
-                    actionDisabled: false,
-                    action: { state.selectedTab = 1 }
-                ) {
-                    Text("屏蔽未生效 · 到点未授权")
-                        .font(.subheadline)
-                }
-            } else if state.delayedBlockActive {
-                statusBanner(
-                    icon: "clock.badge.exclamationmark",
-                    color: .focusAccent,
-                    actionTitle: nil,
-                    actionColor: nil,
-                    actionDisabled: false,
-                    action: {}
-                ) {
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
-                        Text("延时屏蔽倒计时 · 剩余 \(remainingString(end: state.delayedBlockEnd)) · 到点自动屏蔽")
-                            .font(.subheadline)
+                } else if !state.scheduledWindows.isEmpty {
+                    InfoBanner(style: .info, icon: "calendar.badge.exclamationmark") {
+                        Text("已设定 \(state.scheduledWindows.filter(\.enabled).count)/\(state.scheduledWindows.count) 段定时屏蔽")
                             .monospacedDigit()
                     }
                 }
-            } else if !state.scheduledWindows.isEmpty {
-                statusBanner(
-                    icon: "calendar.badge.exclamationmark",
-                    color: .focusAccent,
-                    actionTitle: nil,
-                    actionColor: nil,
-                    actionDisabled: false,
-                    action: {}
-                ) {
-                    Text("已设定 \(state.scheduledWindows.filter(\.enabled).count)/\(state.scheduledWindows.count) 段定时屏蔽")
-                        .font(.subheadline)
-                        .monospacedDigit()
-                }
-            }
 
-            // Password not set reminder (low-key)
-            if state.blockingEnabled && !state.hasPassword {
-                HStack(spacing: 6) {
-                    Image(systemName: "key.fill").foregroundStyle(Color.focusDanger)
-                    Text("未设置屏蔽密码，停止屏蔽无需验证。建议设置，为冲动解除增加一道门槛。")
-                        .font(.caption)
-                        .foregroundStyle(Color.focusDanger)
-                    Spacer()
-                    Button("设置") { state.showSettingsSheet = true }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(Color.focusDanger)
+                if state.blockingEnabled && !state.hasPassword {
+                    InfoBanner(style: .warning, icon: "key.fill", actionTitle: "设置", contentFont: .caption) {
+                        Text("未设置屏蔽密码，停止屏蔽无需验证。建议设置，为冲动解除增加一道门槛。")
+                    } action: { state.showSettingsSheet = true }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.focusDanger.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                .padding(.horizontal)
-                .padding(.top, 8)
-            }
 
-            // Error banner (low-key)
-            if let error = state.lastError {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.focusDanger)
-                    Text(error).font(.caption).foregroundStyle(Color.focusDanger)
-                    Spacer()
-                    Button("清除") { state.lastError = nil }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(Color.focusDanger)
+                if let error = state.lastError {
+                    InfoBanner(style: .danger, actionTitle: "清除", contentFont: .caption) {
+                        Text(error)
+                    } action: { state.lastError = nil }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.focusDanger.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                .padding(.horizontal)
-                .padding(.top, 8)
             }
+            .padding(.horizontal)
 
             // Content — each tab manages its own scrolling
             Group {
@@ -196,119 +117,78 @@ struct MainView: View {
         }
         .frame(minWidth: 500, minHeight: 500, alignment: .top)
         .sheet(isPresented: $state.showPasswordSheet, onDismiss: {
-                passwordInput = ""
-                passwordError = false
-                state.pendingToggleAction = nil
-                state.pendingActionLabel = ""
-                state.lastError = nil
-            }) {
-                VStack(spacing: 16) {
-                    Text("输入密码\(state.pendingActionLabel)")
-                        .font(.headline)
-                    SecureField("输入密码", text: $passwordInput)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                        .focused($unlockFocus, equals: .password)
-                        .onSubmit { verifyPassword() }
-                    if passwordError {
-                        Text("密码错误").foregroundStyle(.red).font(.caption)
-                    }
-                    HStack(spacing: 16) {
-                        Button("取消") {
-                            state.showPasswordSheet = false
-                            passwordInput = ""
-                            passwordError = false
-                            state.pendingToggleAction = nil
-                            state.pendingActionLabel = ""
-                            state.lastError = nil
-                        }
-                        Button("确认") { verifyPassword() }
-                            .buttonStyle(.borderedProminent)
-                    }
+            passwordInput = ""
+            passwordError = false
+            state.pendingToggleAction = nil
+            state.pendingActionLabel = ""
+            state.lastError = nil
+        }) {
+            PasswordDialogView(
+                title: passwordDialogTitle,
+                icon: "lock.rotation",
+                subtitle: passwordDialogSubtitle,
+                message: passwordDialogMessage,
+                confirmTitle: "确认",
+                errorMessage: passwordError ? "密码错误，请重试" : nil,
+                password: $passwordInput,
+                onSubmit: verifyPassword,
+                onCancel: {
+                    state.showPasswordSheet = false
+                    passwordInput = ""
+                    passwordError = false
+                    state.pendingToggleAction = nil
+                    state.pendingActionLabel = ""
+                    state.lastError = nil
                 }
-                .padding()
-                .frame(width: 300, height: 180)
-                .onAppear {
-                    DispatchQueue.main.async {
-                        unlockFocus = .password
-                    }
-                }
-            }
+            )
+        }
         .sheet(isPresented: $state.showSettingsSheet) {
             SettingsView(state: state)
         }
         .sheet(isPresented: $state.showEmergencyOverrideSheet, onDismiss: {
-                emergencyPasswordInput = ""
-                emergencyPasswordError = false
-            }) {
-                VStack(spacing: 16) {
-                    Text("紧急退出专注计时")
-                        .font(.headline)
-                    Text("本月已用 \(state.emergencyUsesThisMonth) / \(state.emergencyQuota) 次")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    SecureField("输入密码", text: $emergencyPasswordInput)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                        .focused($emergencyFocus)
-                        .onSubmit { confirmEmergencyOverride() }
-                    if emergencyPasswordError {
-                        Text(state.lastError ?? "密码错误")
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                    }
-                    HStack(spacing: 16) {
-                        Button("取消") {
-                            state.showEmergencyOverrideSheet = false
-                            emergencyPasswordInput = ""
-                            emergencyPasswordError = false
-                        }
-                        Button("确认") { confirmEmergencyOverride() }
-                            .buttonStyle(.borderedProminent)
-                    }
+            emergencyPasswordInput = ""
+            emergencyPasswordError = false
+        }) {
+            PasswordDialogView(
+                title: "紧急退出专注计时",
+                icon: "clock.badge.exclamationmark",
+                tint: .focusDanger,
+                subtitle: "本月已用 \(state.emergencyUsesThisMonth) / \(state.emergencyQuota) 次",
+                message: "紧急退出会立即结束本次专注计时。请先确认已经完成当前任务。",
+                confirmTitle: "确认退出",
+                confirmTint: .focusDanger,
+                errorMessage: emergencyPasswordError ? (state.lastError ?? "密码错误，请重试") : nil,
+                password: $emergencyPasswordInput,
+                onSubmit: confirmEmergencyOverride,
+                onCancel: {
+                    state.showEmergencyOverrideSheet = false
+                    emergencyPasswordInput = ""
+                    emergencyPasswordError = false
                 }
-                .padding()
-                .frame(width: 320, height: 240)
-                .onAppear {
-                    DispatchQueue.main.async { emergencyFocus = true }
-                }
-            }
+            )
+        }
         .sheet(isPresented: $state.showScheduledExitSheet, onDismiss: {
-                scheduledExitPasswordInput = ""
-                scheduledExitPasswordError = false
-            }) {
-                VStack(spacing: 16) {
-                    Text("紧急退出定时屏蔽")
-                        .font(.headline)
-                    Text("本月已用 \(state.scheduledExitUsesThisMonth) / \(state.scheduledExitQuota) 次（与专注计时独立）")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    SecureField("输入密码", text: $scheduledExitPasswordInput)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 200)
-                        .focused($scheduledExitFocus)
-                        .onSubmit { confirmScheduledExit() }
-                    if scheduledExitPasswordError {
-                        Text(state.lastError ?? "密码错误")
-                            .foregroundStyle(.red)
-                            .font(.caption)
-                    }
-                    HStack(spacing: 16) {
-                        Button("取消") {
-                            state.showScheduledExitSheet = false
-                            scheduledExitPasswordInput = ""
-                            scheduledExitPasswordError = false
-                        }
-                        Button("确认") { confirmScheduledExit() }
-                            .buttonStyle(.borderedProminent)
-                    }
+            scheduledExitPasswordInput = ""
+            scheduledExitPasswordError = false
+        }) {
+            PasswordDialogView(
+                title: "紧急退出定时屏蔽",
+                icon: "calendar.badge.exclamationmark",
+                tint: .focusDanger,
+                subtitle: "本月已用 \(state.scheduledExitUsesThisMonth) / \(state.scheduledExitQuota) 次（与专注计时独立）",
+                message: "退出后本次定时屏蔽会停止。请确认不再需要这段保护。",
+                confirmTitle: "确认退出",
+                confirmTint: .focusDanger,
+                errorMessage: scheduledExitPasswordError ? (state.lastError ?? "密码错误，请重试") : nil,
+                password: $scheduledExitPasswordInput,
+                onSubmit: confirmScheduledExit,
+                onCancel: {
+                    state.showScheduledExitSheet = false
+                    scheduledExitPasswordInput = ""
+                    scheduledExitPasswordError = false
                 }
-                .padding()
-                .frame(width: 320, height: 240)
-                .onAppear {
-                    DispatchQueue.main.async { scheduledExitFocus = true }
-                }
-            }
+            )
+        }
         .alert("冷静期内无法解除屏蔽", isPresented: $state.showCooldownAlert) {
             Button("知道了", role: .cancel) {}
         } message: {
@@ -316,6 +196,29 @@ struct MainView: View {
                 Text("冷静期剩余 \(coolDownString(state.coolDownRemaining))，结束后才能停止屏蔽。")
             }
         }
+    }
+
+    private var passwordDialogTitle: String {
+        switch state.pendingActionLabel {
+        case "解除屏蔽": return "确认解除屏蔽"
+        case "结束正计时": return "确认结束正计时"
+        case "删除条目": return "确认删除条目"
+        default: return "输入密码\(state.pendingActionLabel)"
+        }
+    }
+
+    private var passwordDialogSubtitle: String {
+        switch state.pendingActionLabel {
+        case "解除屏蔽": return "解除后要做什么？先确认这是必要的。"
+        case "结束正计时": return "提前结束会中断这次专注。"
+        case "删除条目": return "删除后需要重新添加这条规则。"
+        default: return "输入屏蔽密码后才会继续本次操作。"
+        }
+    }
+
+    private var passwordDialogMessage: String? {
+        guard state.pendingActionLabel == "解除屏蔽" else { return nil }
+        return "如果只是想休息一下，可以先去「暂停一下」。确有需要时，再输入密码解除。"
     }
 
     private func confirmEmergencyOverride() {
@@ -423,34 +326,7 @@ struct MainView: View {
             .background(.quaternary, in: Capsule())
     }
 
-    @ViewBuilder
-    private func statusBanner<Content: View>(
-        icon: String,
-        color: Color,
-        actionTitle: String?,
-        actionColor: Color?,
-        actionDisabled: Bool,
-        action: @escaping () -> Void,
-        @ViewBuilder text: () -> Content
-    ) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .foregroundStyle(color)
-            text()
-            Spacer()
-            if let actionTitle, let actionColor {
-                Button(actionTitle) { action() }
-                    .buttonStyle(AlwaysActiveBorderlessStyle(color: actionColor))
-                    .font(.caption)
-                    .disabled(actionDisabled)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal)
-        .padding(.top, 8)
-    }
+
 }
 
 /// 正计时已用时（HH:MM:SS）。
