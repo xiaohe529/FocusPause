@@ -19,4 +19,16 @@ struct FocusTimerState: Codable {
     var focusTimerStart: Date? = nil
     /// 普通倒计时专注的开始时刻，用于进度显示；旧状态可为空。
     var focusCountdownStart: Date? = nil
+    /// Break-glass 冷静期截止时间；跨重启恢复。
+    var breakGlassCooldownEnd: Date? = nil
+    /// Break-glass 最近一次发起日期（yyyy-MM-dd）。
+    var breakGlassLastAttemptDay: String? = nil
+    /// 休息计时是否进行中。
+    var restActive: Bool? = nil
+    /// 休息倒计时截止时间。
+    var restEnd: Date? = nil
+    /// 休息事件。
+    var restGoal: String? = nil
+    /// 用户设置的休息分钟数。
+    var restMinutes: Int? = nil
 }

@@ -45,7 +45,14 @@ struct MainView: View {
 
             // Status banners
             VStack(spacing: 8) {
-                if state.focusTimerActive {
+                if state.restActive {
+                    InfoBanner(style: .info, icon: "cup.and.saucer.fill") {
+                        TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            Text("休息中 · 剩余 \(remainingString(end: state.restEnd)) · 结束后再提醒")
+                                .monospacedDigit()
+                        }
+                    }
+                } else if state.focusTimerActive {
                     if state.isElapsedFocus {
                         InfoBanner(style: .success, icon: "lock.fill", actionTitle: "结束", actionColor: .focusDanger) {
                             TimelineView(.periodic(from: .now, by: 1)) { context in

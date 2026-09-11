@@ -9,13 +9,6 @@ enum HelperInstaller {
         }
 
         let token = generateToken()
-        let tokenTmp = "/tmp/focuspause-helper.token"
-        try? token.write(toFile: tokenTmp, atomically: true, encoding: .utf8)
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: tokenTmp
-        )
-        defer { try? FileManager.default.removeItem(atPath: tokenTmp) }
 
         guard let plistSrc = findPlist() else {
             FocusLogger.error("HelperInstaller: plist not found in bundle")
@@ -25,9 +18,15 @@ enum HelperInstaller {
             FocusLogger.error("HelperInstaller: failed to read plist data")
             return false
         }
-        let plistTmp = "/tmp/com.focuspause.helper.plist"
-        try? plistData.write(to: URL(fileURLWithPath: plistTmp))
-        defer { try? FileManager.default.removeItem(atPath: plistTmp) }
+
+        let staging: HelperStagingFiles
+        do {
+            staging = try stageHelperFiles(token: token, plistData: plistData)
+        } catch {
+            FocusLogger.error("HelperInstaller: failed to stage helper files: \(error)")
+            return false
+        }
+        defer { staging.cleanup() }
 
         let binSrc = helperBinURL.path
         let ownerUID = getuid()
@@ -36,8 +35,8 @@ enum HelperInstaller {
         set plistDest to "/Library/LaunchDaemons/com.focuspause.helper.plist"
         set tokenDest to "/Library/Application Support/FocusPause/helper.token"
         set binSrc to "\(binSrc)"
-        set plistSrc to "\(plistTmp)"
-        set tokenSrc to "\(tokenTmp)"
+        set plistSrc to "\(staging.plistURL.path)"
+        set tokenSrc to "\(staging.tokenURL.path)"
 
         do shell script "mkdir -p /Library/PrivilegedHelperTools /Library/Application\\\\ Support/FocusPause" with administrator privileges
 
@@ -152,6 +151,43 @@ enum HelperInstaller {
                     cont.resume(returning: false)
                 }
             }
+        }
+    }
+}
+/// A private, per-install staging directory. A fresh UUID prevents concurrent
+/// installs from overwriting one another and avoids predictable /tmp filenames.
+struct HelperStagingFiles {
+    let directory: URL
+    let tokenURL: URL
+    let plistURL: URL
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+extension HelperInstaller {
+    static func stageHelperFiles(token: String, plistData: Data) throws -> HelperStagingFiles {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("FocusPauseHelperInstall-\(UUID().uuidString)", isDirectory: true)
+        let tokenURL = directory.appendingPathComponent("helper.token", isDirectory: false)
+        let plistURL = directory.appendingPathComponent("com.focuspause.helper.plist", isDirectory: false)
+        let staging = HelperStagingFiles(directory: directory, tokenURL: tokenURL, plistURL: plistURL)
+
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+
+            try token.write(to: tokenURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenURL.path)
+
+            try plistData.write(to: plistURL)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: plistURL.path)
+            return staging
+        } catch {
+            staging.cleanup()
+            throw error
         }
     }
 }

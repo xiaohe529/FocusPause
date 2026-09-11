@@ -104,7 +104,7 @@ struct DialogHeader: View {
     var subtitle: String? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(tint)

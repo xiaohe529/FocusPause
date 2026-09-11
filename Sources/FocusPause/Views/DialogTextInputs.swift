@@ -112,7 +112,7 @@ private struct DialogTextFieldRepresentable: NSViewRepresentable {
         field.alignment = alignment
         field.font = font
         if field.stringValue != text,
-           field !== field.window?.firstResponder {
+           field.currentEditor() == nil {
             field.stringValue = text
         }
         context.coordinator.parent = self
@@ -211,7 +211,7 @@ private struct DialogNumberFieldRepresentable: NSViewRepresentable {
         field.font = font
         let externalText = String(number)
         if field.stringValue != externalText,
-           field !== field.window?.firstResponder {
+           field.currentEditor() == nil {
             field.stringValue = externalText
             context.coordinator.lastSyncedText = externalText
         }
@@ -315,7 +315,7 @@ private struct DialogSecureFieldRepresentable: NSViewRepresentable {
     func updateNSView(_ field: CaretSecureTextField, context: Context) {
         field.placeholderString = placeholder
         if field.stringValue != text,
-           field !== field.window?.firstResponder {
+           field.currentEditor() == nil {
             field.stringValue = text
         }
         context.coordinator.parent = self

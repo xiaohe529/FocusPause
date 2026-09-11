@@ -47,7 +47,7 @@ struct HintsView: View {
 
                 sectionHeader("一些提醒")
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("展示在提醒弹窗里，作为文字提示。")
+                    Text("前 4 条会展示在提醒弹窗（含弹窗休息事件选择），其余仅用于编辑排序。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if state.actionPrompts.isEmpty {
@@ -125,10 +125,19 @@ struct HintsView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(actionColor(for: prompt), in: RoundedRectangle(cornerRadius: 8))
         .onHover { inside in
             hoveringPromptID = inside ? prompt.id : (hoveringPromptID == prompt.id ? nil : hoveringPromptID)
         }
+    }
+
+    private func actionColor(for prompt: PromptItem) -> Color {
+        guard let index = state.actionPrompts.firstIndex(where: { $0.id == prompt.id }) else {
+            return Color.secondary.opacity(0.06)
+        }
+        // 前 4 条是弹窗里会展示的，统一用浅红色背景；其余保持中性。
+        guard index < 4 else { return Color.secondary.opacity(0.06) }
+        return Color.focusDanger.opacity(0.10)
     }
 
     // MARK: - 编辑 sheet（新增 / 编辑共用）

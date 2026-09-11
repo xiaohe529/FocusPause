@@ -6,7 +6,14 @@ public enum DomainNormalizer {
         var value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if value.hasPrefix("http://") { value.removeFirst(7) }
         else if value.hasPrefix("https://") { value.removeFirst(8) }
-        value = value.trimmingCharacters(in: CharacterSet(charactersIn: "./"))
+        // Treat the remainder as a URL authority: ignore an optional path/query, but
+        // keep validation strict for userinfo, ports, and other forbidden characters.
+        if let boundary = value.firstIndex(where: { "/?#".contains($0) }) {
+            value = String(value[..<boundary])
+        }
+        while value.hasSuffix(".") || value.hasSuffix("/") {
+            value.removeLast()
+        }
 
         guard !value.isEmpty, value.count <= 253,
               !value.contains(where: { $0.isWhitespace || $0.isNewline || $0.unicodeScalars.contains(where: \.properties.isDefaultIgnorableCodePoint) }),

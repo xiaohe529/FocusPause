@@ -13,6 +13,8 @@ enum PanelChoice {
     case custom(Int)      // 自定义分钟
     case elapsed          // 选「正计时」（不限时）
     case pause            // 点了「暂停一下」，跳转到暂停版块
+    case grounding        // 点了「五感着陆」，跳转到着陆练习
+    case rest(Int)        // 点了「休息一下」，携带休息分钟数
     case secondary        // footer 次按钮（取消）
     case tertiary         // footer 第三按钮（稍后提醒）
     case sectionAction    // 版块内的第二个动作（如「立即屏蔽」）
@@ -22,6 +24,8 @@ enum PanelChoice {
 final class PanelResult {
     var choice: PanelChoice = .cancel
     var goal = ""
+    var restMinutes = 6
+    var restEvent = ""
 }
 
 /// 弹窗语义：普通提醒 / 需要注意 / 授权或屏蔽到期等高风险状态。
@@ -77,6 +81,16 @@ struct PromptPanelConfig {
     /// 是否显示「暂停一下」；待授权且延长次数用完时可隐藏，优先完成授权。
     var showPause = true
     var pauseHint: String? = nil
+    /// 是否显示紧凑的「休息一下」入口。
+    var showRest = false
+    var restTitle = "休息一下"
+    var restPlaceholder = "休息时想做什么？"
+    var restDefaultMinutes = 6
+    /// 休息事件候选；为空时回退到 actionItems。
+    var restOptions: [String] = []
+    /// 专注类弹窗有「休息一下」作为替代动作时，可以隐藏通用的「一些提醒」版块；底部随机文字仍可保留。
+    var showHints = true
+    var showTextHint = true
 }
 
 struct PracticePromptPanel: View {
@@ -89,6 +103,9 @@ struct PracticePromptPanel: View {
     @State private var toastGeneration = 0
     @State private var textHintIndex = 0
     @State private var elapsedMode = false
+    @State private var restMinutes: Int
+    @State private var restEvent = ""
+    @State private var customFieldEpoch = 0
 
     private enum DurationSel {
         case preset(Int)
@@ -102,6 +119,7 @@ struct PracticePromptPanel: View {
         self.result = result
         self.dismiss = dismiss
         _duration = State(initialValue: config.presets.first.map { .preset($0.1) } ?? .custom(30))
+        _restMinutes = State(initialValue: config.restDefaultMinutes)
     }
 
     var body: some View {
@@ -111,14 +129,17 @@ struct PracticePromptPanel: View {
             if config.durationConfirmTitle != nil {
                 primaryActionSection
             }
-            if !config.actionItems.isEmpty {
+            if config.showHints && !config.actionItems.isEmpty {
                 hintsSection
             }
-            if !config.textItems.isEmpty {
-                textHintSection
+            if config.showRest {
+                restSection
             }
             if config.showPause {
                 pauseSection
+            }
+            if config.showTextHint && !config.textItems.isEmpty {
+                textHintSection
             }
             footer
         }
@@ -134,24 +155,12 @@ struct PracticePromptPanel: View {
     }
 
     private var header: some View {
-        VStack(spacing: 12) {
-            DialogHeader(
-                title: config.title,
-                icon: config.icon,
-                tint: config.tone.color,
-                subtitle: config.subtitle
-            )
-            HStack {
-                Label(config.tone.badge, systemImage: "circle.fill")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(config.tone.color)
-                    .labelStyle(.titleAndIcon)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(config.tone.color.opacity(0.10), in: Capsule())
-                Spacer()
-            }
-        }
+        DialogHeader(
+            title: config.title,
+            icon: config.icon,
+            tint: config.tone.color,
+            subtitle: config.subtitle
+        )
     }
 
     private var section1: some View {
@@ -190,6 +199,7 @@ struct PracticePromptPanel: View {
                             ForEach(config.presets, id: \.1) { preset in
                                 Button {
                                     duration = .preset(preset.1)
+                                    customFieldEpoch += 1
                                 } label: {
                                     Text(preset.0)
                                         .frame(maxWidth: .infinity, minHeight: 28)
@@ -211,6 +221,7 @@ struct PracticePromptPanel: View {
                             alignment: .right
                             )
                                 .frame(width: 68)
+                                .id(customFieldEpoch)
                             Text("分钟")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -235,7 +246,7 @@ struct PracticePromptPanel: View {
                             dismiss()
                         } label: {
                             Text(primaryButtonTitle)
-                                .frame(minWidth: 118, minHeight: 30)
+                                .frame(minWidth: 92, minHeight: 28)
                         }
                         .buttonStyle(AlwaysActiveButtonStyle(color: config.tone.color))
                         .help(primaryButtonTitle)
@@ -247,13 +258,13 @@ struct PracticePromptPanel: View {
                             confirmDuration()
                         } label: {
                             Label(durationConfirmTitle, systemImage: "checkmark.circle.fill")
-                                .frame(minWidth: 132, minHeight: 30)
+                                .font(.subheadline)
+                                .frame(minWidth: 118, minHeight: 26)
                         }
-                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .orange))
                         .help(durationConfirmTitle)
                     }
                 }
-
                 if let sectionActionTitle = config.sectionActionTitle {
                     HStack {
                         Spacer()
@@ -263,11 +274,10 @@ struct PracticePromptPanel: View {
                             dismiss()
                         } label: {
                             Text(sectionActionTitle)
-                                .padding(.vertical, 5)
-                                .padding(.horizontal, 10)
+                                .frame(minWidth: 82, minHeight: 26)
                         }
-                        .buttonStyle(.bordered)
-                        .tint(Color.focusActive)
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                        .help(sectionActionTitle)
                     }
                 }
             }
@@ -288,7 +298,8 @@ struct PracticePromptPanel: View {
                 dismiss()
             } label: {
                 Text(primaryButtonTitle)
-                    .frame(minWidth: 108, minHeight: 30)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minWidth: 96, minHeight: 30)
             }
             .buttonStyle(AlwaysActiveButtonStyle(color: config.primaryTint ?? config.tone.color))
             .help(primaryButtonTitle)
@@ -297,22 +308,23 @@ struct PracticePromptPanel: View {
     }
 
     private var hintsSection: some View {
-        SectionCard(title: "一些提醒", icon: "bell.fill", spacing: 8) {
-            FlowLayout(spacing: 6) {
-                ForEach(config.actionItems) { item in
+        SectionCard(title: "一些提醒", icon: "bell.fill", spacing: 6) {
+            FlowLayout(spacing: 5) {
+                ForEach(config.actionItems.prefix(4)) { item in
                     Button {
                         showToast()
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 4) {
                             Image(systemName: "hand.point.right")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Color.focusAccent)
                             Text(item.text)
                                 .font(.body)
                         }
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
                         .background(Color.secondary.opacity(0.10), in: Capsule())
+                        .foregroundStyle(Color.primary)
                         .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -328,17 +340,109 @@ struct PracticePromptPanel: View {
         }
     }
 
+    private var restSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Label(config.restTitle, systemImage: "cup.and.saucer.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.focusAccent)
+                Spacer()
+                DialogNumberField(
+                    number: $restMinutes,
+                    allowedRange: 1...120
+                )
+                .frame(width: 54)
+                Text("分钟")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !restChoices.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(restChoices, id: \.self) { choice in
+                        Button {
+                            restEvent = restEvent == choice ? "" : choice
+                        } label: {
+                            Text(choice)
+                                .font(.caption)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(
+                                    restEvent == choice
+                                        ? Color.focusAccent.opacity(0.18)
+                                        : Color.secondary.opacity(0.10),
+                                    in: Capsule()
+                                )
+                                .overlay {
+                                    Capsule().strokeBorder(
+                                        restEvent == choice
+                                            ? Color.focusAccent.opacity(0.6)
+                                            : Color.clear,
+                                        lineWidth: 1
+                                    )
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            if !config.restPlaceholder.isEmpty {
+                DialogTextField(
+                    text: $restEvent,
+                    placeholder: config.restPlaceholder,
+                    height: 22
+                )
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    result.restMinutes = max(1, restMinutes)
+                    result.restEvent = restEvent
+                    result.goal = goal
+                    result.choice = .rest(max(1, restMinutes))
+                    dismiss()
+                } label: {
+                    Label("休息一下", systemImage: "cup.and.saucer.fill")
+                        .frame(minWidth: 76, minHeight: 26)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+            }
+        }
+        .padding(10)
+        .background(Color.focusAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var restChoices: [String] {
+        Array(config.actionItems.prefix(4).map(\.text))
+    }
+
     private var pauseSection: some View {
         VStack(spacing: 8) {
-            Button {
-                result.goal = goal
-                result.choice = .pause
-                dismiss()
-            } label: {
-                Label("暂停一下", systemImage: "pause.circle.fill")
-                    .frame(maxWidth: .infinity, minHeight: 32)
+            HStack(spacing: 8) {
+                Button {
+                    result.goal = goal
+                    result.choice = .pause
+                    dismiss()
+                } label: {
+                    Label("暂停一下", systemImage: "pause.circle.fill")
+                        .frame(minWidth: 118, minHeight: 28)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+
+                Button {
+                    result.goal = goal
+                    result.choice = .grounding
+                    dismiss()
+                } label: {
+                    Label("五感着陆", systemImage: "5.circle")
+                        .font(.caption)
+                        .frame(minWidth: 72, minHeight: 24)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+            .frame(maxWidth: .infinity, alignment: .center)
 
             if let pauseHint = config.pauseHint {
                 Text(pauseHint)

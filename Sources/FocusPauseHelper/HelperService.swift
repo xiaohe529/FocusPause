@@ -3,10 +3,19 @@ import Foundation
 import FocusPauseHelperShared
 
 final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtocol {
-    private static let hostsPath = "/private/etc/hosts"
-    private static let markerBegin = "# FocusPause BEGIN"
-    private static let markerEnd = "# FocusPause END"
     private static let hostsStateQueue = DispatchQueue(label: "com.focuspause.helper.hosts", qos: .userInitiated)
+    private static let stateQueue = DispatchQueue(label: "com.focuspause.helper.state", qos: .utility)
+    private static let orphanMonitorQueue = DispatchQueue(label: "com.focuspause.helper.orphan", qos: .utility)
+    private static let statePath = "/Library/Application Support/FocusPause/helper-state.json"
+    private static let heartbeatPath = "/Library/Application Support/FocusPause/app.heartbeat"
+    nonisolated(unsafe) private static var orphanMonitorStarted = false
+    private static let orphanMonitorLock = NSLock()
+
+    private struct PersistentState: Codable {
+        var dnsBackups: [String: [String]] = [:]
+        var appBundlePath: String?
+        var lastHeartbeatAt: Date?
+    }
 
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection newConnection: NSXPCConnection) -> Bool {
@@ -20,13 +29,34 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
 
     // MARK: - HelperProtocol
 
+    override init() {
+        super.init()
+        Self.startOrphanMonitorIfNeeded()
+    }
+
     func ping(_ token: String, withReply reply: @escaping (Bool, String) -> Void) {
+        nonisolated(unsafe) let reply = reply
         DispatchQueue.global(qos: .userInitiated).async {
             guard Self.tokenIsValid(token) else {
                 reply(false, "unauthorized")
                 return
             }
-            reply(true, "FocusPauseHelper v1.1")
+            reply(true, "FocusPauseHelper v1.2")
+        }
+    }
+
+    func heartbeat(_ token: String, bundlePath: String) {
+        DispatchQueue.global(qos: .utility).async {
+            guard Self.tokenIsValid(token),
+                  bundlePath.hasSuffix(".app") else {
+                return
+            }
+            Self.stateQueue.sync {
+                var state = Self.readState()
+                state.appBundlePath = bundlePath
+                state.lastHeartbeatAt = Date()
+                Self.writeState(state)
+            }
         }
     }
 
@@ -35,46 +65,28 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
         domains: [String],
         withReply reply: @escaping (Bool, String) -> Void
     ) {
+        nonisolated(unsafe) let reply = reply
         Self.hostsStateQueue.async {
             guard Self.tokenIsValid(token) else {
                 reply(false, "unauthorized")
                 return
             }
 
-            var normalized: [String] = []
-            for rawDomain in domains {
-                guard let domain = DomainNormalizer.normalize(rawDomain) else {
-                    reply(false, "rejected: invalid domain")
-                    return
-                }
-                if !normalized.contains(domain) { normalized.append(domain) }
-            }
-            guard !normalized.isEmpty else {
-                reply(false, "rejected: no domains")
-                return
-            }
-
             let content: String
             do {
-                content = try String(contentsOfFile: Self.hostsPath, encoding: .utf8)
+                content = try String(contentsOfFile: HelperConstants.hostsPath, encoding: .utf8)
             } catch {
                 reply(false, "unable to read hosts: \(error.localizedDescription)")
                 return
             }
 
-            var lines = Self.removeFocusPauseSections(from: content)
-            while lines.last?.isEmpty == true { lines.removeLast() }
-            lines.append(Self.markerBegin)
-            for domain in normalized {
-                lines.append("127.0.0.1 \(domain)")
-                lines.append("127.0.0.1 www.\(domain)")
-                lines.append("::1 \(domain)")
-                lines.append("::1 www.\(domain)")
+            guard let content = HelperValidation.makeHostsContent(existing: content, domains: domains) else {
+                reply(false, "rejected: invalid domains")
+                return
             }
-            lines.append(Self.markerEnd)
 
             do {
-                try Self.writeHostsAtomically(lines.joined(separator: "\n"))
+                try Self.writeHostsAtomically(content)
             } catch {
                 reply(false, "unable to write hosts: \(error.localizedDescription)")
                 return
@@ -89,6 +101,7 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
         _ token: String,
         withReply reply: @escaping (Bool, String) -> Void
     ) {
+        nonisolated(unsafe) let reply = reply
         Self.hostsStateQueue.async {
             guard Self.tokenIsValid(token) else {
                 reply(false, "unauthorized")
@@ -97,13 +110,13 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
 
             let content: String
             do {
-                content = try String(contentsOfFile: Self.hostsPath, encoding: .utf8)
+                content = try String(contentsOfFile: HelperConstants.hostsPath, encoding: .utf8)
             } catch {
                 reply(false, "unable to read hosts: \(error.localizedDescription)")
                 return
             }
 
-            let lines = Self.removeFocusPauseSections(from: content)
+            let lines = HelperValidation.removeFocusPauseSections(from: content)
             do {
                 try Self.writeHostsAtomically(lines.joined(separator: "\n"))
             } catch {
@@ -122,18 +135,40 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
         servers: [String],
         withReply reply: @escaping (Bool, String) -> Void
     ) {
+        nonisolated(unsafe) let reply = reply
         DispatchQueue.global(qos: .userInitiated).async {
             guard Self.tokenIsValid(token) else {
                 reply(false, "unauthorized")
                 return
             }
-            guard Self.serviceNameIsValid(service) else {
+            guard HelperValidation.serviceNameIsValid(service) else {
                 reply(false, "rejected: invalid network service")
                 return
             }
-            guard !servers.isEmpty, servers.allSatisfy(Self.serverValueIsValid) else {
+            guard !servers.isEmpty, servers.allSatisfy(HelperValidation.serverValueIsValid) else {
                 reply(false, "rejected: invalid DNS servers")
                 return
+            }
+
+            if servers == ["127.0.0.1"] {
+                let hasBackup = Self.stateQueue.sync {
+                    Self.readState().dnsBackups[service]
+                }
+                if hasBackup == nil {
+                    let currentServers = Self.getCurrentDNSServers(service: service)
+                    let originalServers = currentServers.filter { $0 != "127.0.0.1" }
+                    Self.stateQueue.sync {
+                        var state = Self.readState()
+                        state.dnsBackups[service] = originalServers
+                        Self.writeState(state)
+                    }
+                }
+            } else {
+                Self.stateQueue.sync {
+                    var state = Self.readState()
+                    state.dnsBackups.removeValue(forKey: service)
+                    Self.writeState(state)
+                }
             }
 
             let arguments = ["-setdnsservers", service] + servers
@@ -146,6 +181,154 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
             Self.flushDNSCache()
             reply(true, result.output)
         }
+    }
+
+    // MARK: - Persistent helper state
+
+    private static func readState() -> PersistentState {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)) else {
+            return PersistentState()
+        }
+        let decoder = JSONDecoder()
+        // Keep this in sync with writeState(_:), which uses ISO-8601 dates.
+        decoder.dateDecodingStrategy = .iso8601
+        guard let state = try? decoder.decode(PersistentState.self, from: data) else {
+            return PersistentState()
+        }
+        return state
+    }
+
+    private static func writeState(_ state: PersistentState) {
+        do {
+            let directory = (statePath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(
+                atPath: directory,
+                withIntermediateDirectories: true
+            )
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(state)
+            try data.write(to: URL(fileURLWithPath: statePath), options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600, .ownerAccountID: 0, .groupOwnerAccountID: 0],
+                ofItemAtPath: statePath
+            )
+        } catch {
+            NSLog("FocusPauseHelper state write failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func getCurrentDNSServers(service: String) -> [String] {
+        let result = runTool("/usr/sbin/networksetup", arguments: ["-getdnsservers", service])
+        guard result.status == 0 else { return [] }
+        if result.output.contains("There aren't any DNS") { return [] }
+        return result.output
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func startOrphanMonitorIfNeeded() {
+        orphanMonitorLock.lock()
+        defer { orphanMonitorLock.unlock() }
+        guard !orphanMonitorStarted else { return }
+        orphanMonitorStarted = true
+
+        orphanMonitorQueue.async {
+            while true {
+                checkOrphanedApp()
+                Thread.sleep(forTimeInterval: 5 * 60)
+            }
+        }
+    }
+
+    private static func checkOrphanedApp() {
+        let state = readState()
+        guard let bundlePath = state.appBundlePath,
+              let lastHeartbeatAt = state.lastHeartbeatAt else { return }
+
+        // Main app must be gone long enough, and its bundle must be missing.
+        guard Date().timeIntervalSince(lastHeartbeatAt) >= 10 * 60,
+              !FileManager.default.fileExists(atPath: bundlePath),
+              runTool("/usr/bin/pgrep", arguments: ["-x", "FocusPause"]).status != 0 else {
+            return
+        }
+
+        NSLog("FocusPauseHelper orphaned app detected; cleaning blocking state")
+        let hostsCleared = clearHostsUnauthenticated()
+        let dnsRestored = restoreDNSForOrphanCleanup(state: state)
+
+        guard hostsCleared, dnsRestored else {
+            NSLog("FocusPauseHelper orphan cleanup incomplete; will retry")
+            return
+        }
+
+        removeHelperFilesAndStop()
+    }
+
+    private static func clearHostsUnauthenticated() -> Bool {
+        hostsStateQueue.sync {
+            do {
+                let content = try String(contentsOfFile: HelperConstants.hostsPath, encoding: .utf8)
+                let lines = HelperValidation.removeFocusPauseSections(from: content)
+                try writeHostsAtomically(lines.joined(separator: "\n"))
+                flushDNSCache()
+                return true
+            } catch {
+                NSLog("FocusPauseHelper orphan hosts cleanup failed: \(error.localizedDescription)")
+                return false
+            }
+        }
+    }
+
+    private static func restoreDNSForOrphanCleanup(state: PersistentState) -> Bool {
+        var succeeded = true
+
+        for (service, servers) in state.dnsBackups {
+            let restored = servers.isEmpty ? ["Empty"] : servers
+            let result = runTool("/usr/sbin/networksetup", arguments: ["-setdnsservers", service] + restored)
+            if result.status != 0 {
+                succeeded = false
+                NSLog("FocusPauseHelper DNS restore failed for \(service): \(result.output)")
+            }
+        }
+
+        // Fallback: reset any service still pointed at FocusPause's blocking DNS.
+        let listing = runTool("/usr/sbin/networksetup", arguments: ["-listallnetworkservices"])
+        guard listing.status == 0 else { return false }
+        let services = listing.output
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter {
+                !$0.isEmpty && !$0.contains("An asterisk") && !$0.contains("(*) denotes")
+            }
+
+        for service in services {
+            let current = getCurrentDNSServers(service: service)
+            if current == ["127.0.0.1"] {
+                let result = runTool("/usr/sbin/networksetup", arguments: ["-setdnsservers", service, "Empty"])
+                if result.status != 0 {
+                    succeeded = false
+                    NSLog("FocusPauseHelper DNS fallback restore failed for \(service): \(result.output)")
+                }
+            }
+        }
+        flushDNSCache()
+        return succeeded
+    }
+
+    private static func removeHelperFilesAndStop() {
+        try? FileManager.default.removeItem(atPath: HelperConstants.tokenPath)
+        try? FileManager.default.removeItem(atPath: HelperConstants.installedBinPath)
+        try? FileManager.default.removeItem(atPath: HelperConstants.daemonPlistPath)
+        try? FileManager.default.removeItem(atPath: statePath)
+        try? FileManager.default.removeItem(atPath: heartbeatPath)
+
+        let command = "sleep 0.2; /bin/launchctl bootout system \(HelperConstants.daemonPlistPath) >/dev/null 2>&1 || true"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", command]
+        try? process.run()
     }
 
     // MARK: - Security
@@ -165,63 +348,6 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
             diff |= supplied[index] ^ expected[index]
         }
         return diff == 0
-    }
-
-    private static func serviceNameIsValid(_ value: String) -> Bool {
-        !value.isEmpty
-            && value.count <= 256
-            && !value.hasPrefix("-")
-            && !value.contains(where: { $0.isNewline || $0.unicodeScalars.contains { $0.value == 0 || $0.properties.isDefaultIgnorableCodePoint } })
-    }
-
-    private static func serverValueIsValid(_ raw: String) -> Bool {
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value == "Empty" { return true }
-        guard !value.isEmpty, value == raw, !value.contains(where: { $0.isNewline || $0 == "\0" }) else {
-            return false
-        }
-
-        var ipv4 = in_addr()
-        var ipv6 = in6_addr()
-        return value.withCString { pointer in
-            inet_pton(AF_INET, pointer, &ipv4) == 1
-                || inet_pton(AF_INET6, pointer, &ipv6) == 1
-        }
-    }
-
-    // MARK: - Hosts and system utilities
-
-    private static func removeFocusPauseSections(from content: String) -> [String] {
-        let lines = content.components(separatedBy: "\n")
-        var result: [String] = []
-        var removing = false
-        var sawBegin = false
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !removing, trimmed == markerBegin {
-                removing = true
-                sawBegin = true
-                continue
-            }
-            if removing {
-                if trimmed == markerEnd {
-                    removing = false
-                }
-                continue
-            }
-            if !sawBegin, trimmed == markerEnd {
-                // Remove a malformed trailing marker if it exists without a begin marker.
-                continue
-            }
-            result.append(line)
-        }
-
-        if removing {
-            // A missing end marker must not leak the partial FocusPause section.
-            return result
-        }
-        return result
     }
 
     private static func writeHostsAtomically(_ content: String) throws {
@@ -244,7 +370,7 @@ final class HelperServiceDelegate: NSObject, NSXPCListenerDelegate, HelperProtoc
         }
 
         let renameResult = temporaryPath.withCString { temporary in
-            hostsPath.withCString { destination in
+            HelperConstants.hostsPath.withCString { destination in
                 rename(temporary, destination)
             }
         }

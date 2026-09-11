@@ -18,6 +18,14 @@ let package = Package(
             name: "FocusPause",
             dependencies: ["FocusPauseHelperShared"],
             path: "Sources/FocusPause"
+        ),
+        .testTarget(
+            name: "FocusPauseTests",
+            dependencies: [
+                "FocusPause",
+                "FocusPauseHelperShared"
+            ],
+            path: "Tests/FocusPauseTests"
         )
     ]
 )

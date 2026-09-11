@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// 「我的工具箱」页：分组的可编辑外链集合，分组名和链接都可增删改。
 struct BreathingView: View {
@@ -123,12 +124,16 @@ struct BreathingView: View {
                 Button {
                     state.openToolboxItem(link)
                 } label: {
-                    Label(link.title, systemImage: "app.badge")
-                        .font(.subheadline)
+                    HStack(spacing: 6) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: link.url))
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                        Text(link.title)
+                            .lineLimit(1)
+                    }
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(Color.focusAccent)
-                .lineLimit(1)
                 .help("启动 \(link.url)")
             } else {
                 Link(destination: URL(string: link.url) ?? URL(string: "https://")!) {

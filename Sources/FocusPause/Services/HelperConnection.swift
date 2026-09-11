@@ -8,8 +8,16 @@ final class HelperConnection: @unchecked Sendable {
     private var connection: NSXPCConnection?
     private var lastProbeTime: Date = .distantPast
     private var lastProbeResult: Bool = false
+    private var heartbeatTask: Task<Void, Never>?
 
-    private init() {}
+    private init() {
+        heartbeatTask = Task { [weak self] in
+            while !Task.isCancelled {
+                _ = await self?.forceProbe()
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
+    }
 
     // MARK: - Public API
 
@@ -84,6 +92,8 @@ final class HelperConnection: @unchecked Sendable {
                 return
             }
 
+            proxy.heartbeat(Self.readToken(), bundlePath: Bundle.main.bundleURL.path)
+
             operation(proxy) { ok, output in
                 continuation.resume(returning: (ok, output))
             }
@@ -114,12 +124,13 @@ final class HelperConnection: @unchecked Sendable {
                     continuation.resume(returning: false)
                     return
                 }
-                guard message == "FocusPauseHelper v1.1" else {
+                guard message == "FocusPauseHelper v1.2" else {
                     FocusLogger.error("HelperConnection: incompatible helper protocol: \(message)")
                     self.markConnectionInvalid()
                     continuation.resume(returning: false)
                     return
                 }
+                proxy.heartbeat(Self.readToken(), bundlePath: Bundle.main.bundleURL.path)
                 continuation.resume(returning: true)
             }
         }
@@ -134,8 +145,9 @@ final class HelperConnection: @unchecked Sendable {
                                    options: [])
         conn.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
         conn.invalidationHandler = { [weak self] in
-            self?.queue.async {
-                self?.connection = nil
+            guard let self else { return }
+            self.queue.async {
+                self.connection = nil
             }
         }
         conn.resume()

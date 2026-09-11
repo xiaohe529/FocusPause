@@ -9,14 +9,20 @@ import CoreGraphics
 class AppState: ObservableObject {
     static let shared = AppState()
 
+    let settings: AppSettingsStore
+
+    init(settings: AppSettingsStore = .standard) {
+        self.settings = settings
+    }
+
     @Published var blockingEnabled = false
     @Published var blockRules: [BlockRule] = []
     @Published var hasPassword = false
     /// The version the user chose to ignore in the update prompt; nag again only
     /// when a newer version appears.
     var ignoredUpdateVersion: String? {
-        get { UserDefaults.standard.string(forKey: "ignoredUpdateVersion") }
-        set { UserDefaults.standard.set(newValue, forKey: "ignoredUpdateVersion") }
+        get { settings.string(.ignoredUpdateVersion) }
+        set { settings.set(newValue, for: .ignoredUpdateVersion) }
     }
     @Published var showPasswordSheet = false
     @Published var pendingToggleAction: (() -> Void)?
@@ -31,6 +37,9 @@ class AppState: ObservableObject {
     @Published var focusTimerStart: Date? = nil
     /// 普通倒计时专注的开始时刻，用于绘制进度。
     @Published var focusCountdownStart: Date? = nil
+    @Published var restActive = false
+    @Published var restEnd: Date? = nil
+    @Published var restGoal: String? = nil
     @Published var emergencyUsesThisMonth = 0
     @Published var showEmergencyOverrideSheet = false
     @Published var delayedBlockActive = false
@@ -57,6 +66,8 @@ class AppState: ObservableObject {
     @Published var remindFocusTimerAfterBlock = true
     @Published var remindDelayedBlockAfterUnblock = true
     @Published var remindFocusTimerAfterEnd = false
+    @Published var remindCountdownManualEnd = true
+    @Published var remindRestManualEnd = true
     @Published var showCooldownAlert = false
     @Published var remindBlockingNoFocus = false
     @Published var blockingNoFocusIntervalMinutes = 30
@@ -69,6 +80,9 @@ class AppState: ObservableObject {
     /// 定时屏蔽「紧急退出」每月已用次数（与专注计时的紧急退出额度相互独立）。
     @Published var scheduledExitUsesThisMonth = 0
     @Published var showScheduledExitSheet = false
+    @Published var breakGlassEnabled = false
+    @Published var breakGlassCooldownEnd: Date? = nil
+    @Published var breakGlassLastAttemptDay: String? = nil
     /// 全拦总开关：开启后任何屏蔽状态都屏蔽全部网站 + App，忽略每条规则的开关。
     @Published var forceBlockAll = false
 
@@ -108,6 +122,7 @@ class AppState: ObservableObject {
 
     /// 尝试占用提醒弹窗闸；已有弹窗在弹则返回 false（调用方直接跳过，不排队）。
     private func beginReminderModal() -> Bool {
+        guard !restActive else { return false }
         guard !reminderModalInFlight else { return false }
         reminderModalInFlight = true
         return true
@@ -126,10 +141,12 @@ class AppState: ObservableObject {
     let appBlocker = AppBlocker()
     let wifiBlocker = WiFiBlocker()
     let focusTimerEngine = FocusTimerEngine()
+    let restTimerEngine = FocusTimerEngine()
     private let goalOverlay = GoalOverlayController()
     private var goalOverlayDismissedByUser = false
 
     /// 专注计时「紧急退出」每月额度（用户可设 1–5，默认 3；每月仅可改一次）。
+    @Published var restMinutes = 6
     @Published var emergencyQuota = 3
     /// 定时屏蔽「紧急退出」每月额度（与专注计时独立；用户可设 1–5，默认 3；每月仅可改一次）。
     @Published var scheduledExitQuota = 3
@@ -150,8 +167,8 @@ class AppState: ObservableObject {
         }
         emergencyQuota = min(5, max(1, value))
         lastEmergencyQuotaSetMonth = month
-        UserDefaults.standard.set(emergencyQuota, forKey: "emergencyQuota")
-        UserDefaults.standard.set(month, forKey: "emergencyQuotaSetMonth")
+        settings.set(emergencyQuota, for: .emergencyQuota)
+        settings.set(month, for: .emergencyQuotaSetMonth)
         FocusLogger.info("Emergency quota set to \(emergencyQuota) for \(month)")
         return true
     }
@@ -166,19 +183,20 @@ class AppState: ObservableObject {
         }
         scheduledExitQuota = min(5, max(1, value))
         lastScheduledQuotaSetMonth = month
-        UserDefaults.standard.set(scheduledExitQuota, forKey: "scheduledExitQuota")
-        UserDefaults.standard.set(month, forKey: "scheduledExitQuotaSetMonth")
+        settings.set(scheduledExitQuota, for: .scheduledExitQuota)
+        settings.set(month, for: .scheduledExitQuotaSetMonth)
         FocusLogger.info("Scheduled-exit quota set to \(scheduledExitQuota) for \(month)")
         return true
     }
 
     private var lastResetMonth: String = ""
 
-    var isLocked: Bool { focusTimerActive }
+    var isLocked: Bool { focusTimerActive || restActive }
 
-    /// 屏蔽名单处于锁定状态（专注计时中 / 屏蔽开启中）时返回提示文案，否则 nil。
+    /// 屏蔽名单处于锁定状态（休息 / 专注计时 / 屏蔽开启中）时返回提示文案，否则 nil。
     func ruleListLockedError() -> String? {
-        if isLocked { return "专注计时中，屏蔽名单已锁定，无法删除条目" }
+        if restActive { return "休息中，屏蔽名单已锁定，无法删除条目" }
+        if focusTimerActive { return "专注计时中，屏蔽名单已锁定，无法删除条目" }
         if blockingEnabled { return "屏蔽开启中，屏蔽名单已锁定，无法删除条目" }
         return nil
     }
@@ -196,50 +214,13 @@ class AppState: ObservableObject {
     }
 
     private func activeMatch(now: Date = Date()) -> (window: ScheduledWindow, key: String)? {
-        let cal = Calendar.current
-        let c = cal.dateComponents([.hour, .minute], from: now)
-        let minute = (c.hour ?? 0) * 60 + (c.minute ?? 0)
-        for w in scheduledWindows where w.enabled {
-            if w.repeats {
-                if let k = activeKeyForDaily(w, now: now, cal: cal, minute: minute) { return (w, k) }
-            } else if let k = activeKeyForOneTime(w, now: now, cal: cal) { return (w, k) }
-        }
-        return nil
-    }
-
-    /// 每天重复：按当日时间匹配，归属日 = 开始当天（跨午夜时凌晨段归前一天）。
-    private func activeKeyForDaily(_ w: ScheduledWindow, now: Date, cal: Calendar, minute: Int) -> String? {
-        let overnight = w.endMinute < w.startMinute
-        if !overnight {
-            if minute >= w.startMinute && minute < w.endMinute {
-                return Self.occurrenceKey(w, day: cal.startOfDay(for: now))
+        let calendar = Calendar.current
+        for window in scheduledWindows where window.enabled {
+            if let key = window.activeKey(now: now, calendar: calendar) {
+                return (window, key)
             }
-        } else if minute >= w.startMinute {                       // 跨午夜：晚上段
-            return Self.occurrenceKey(w, day: cal.startOfDay(for: now))
-        } else if minute < w.endMinute {                          // 跨午夜：次日凌晨段
-            let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
-            return Self.occurrenceKey(w, day: yesterday)
         }
         return nil
-    }
-
-    /// 一次性：只在 anchorDay 那一次开机范围内有效。
-    private func activeKeyForOneTime(_ w: ScheduledWindow, now: Date, cal: Calendar) -> String? {
-        guard let day = w.anchorDay else { return nil }
-        let startMin = cal.startOfDay(for: day)
-        let start = startMin.addingTimeInterval(TimeInterval(w.startMinute * 60))
-        let spanMin = w.endMinute > w.startMinute
-            ? (w.endMinute - w.startMinute)
-            : (24 * 60 + w.endMinute - w.startMinute)
-        let end = start.addingTimeInterval(TimeInterval(spanMin * 60))
-        guard now >= start && now < end else { return nil }
-        return Self.occurrenceKey(w, day: startMin)
-    }
-
-    private static func occurrenceKey(_ w: ScheduledWindow, day: Date) -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd"
-        return "\(w.id.uuidString)|\(fmt.string(from: day))"
     }
 
     /// 是否处于定时屏蔽硬锁内：当前在某段时间段，且该次时间段未被紧急退出放弃。
@@ -261,6 +242,7 @@ class AppState: ObservableObject {
     /// The goal for whichever session is currently active (focus timer or
     /// delayed block), shown in the floating always-on-top overlay.
     private var activeGoal: String? {
+        if restActive { return restGoal }
         if focusTimerActive { return focusTimerGoal }
         if delayedBlockActive { return delayedBlockGoal }
         return nil
@@ -306,23 +288,23 @@ class AppState: ObservableObject {
 
         hasPassword = KeychainPassword.load() != nil
 
-        launchAtLogin = UserDefaults.standard.bool(forKey: "launchAtLogin")
-        if let enabled = UserDefaults.standard.object(forKey: "blockingEnabled") as? Bool {
+        launchAtLogin = settings.bool(.launchAtLogin)
+        if let enabled = settings.object(.blockingEnabled) as? Bool {
             blockingEnabled = enabled
         }
-        forceBlockAll = UserDefaults.standard.bool(forKey: "forceBlockAll")
+        forceBlockAll = settings.bool(.forceBlockAll)
         loadScheduledWindows()
-        if let q = UserDefaults.standard.object(forKey: "emergencyQuota") as? Int {
+        if let q = settings.optionalInt(.emergencyQuota) {
             emergencyQuota = min(5, max(1, q))
         }
-        if let q = UserDefaults.standard.object(forKey: "scheduledExitQuota") as? Int {
+        if let q = settings.optionalInt(.scheduledExitQuota) {
             scheduledExitQuota = min(5, max(1, q))
         }
-        lastEmergencyQuotaSetMonth = UserDefaults.standard.string(forKey: "emergencyQuotaSetMonth")
-        lastScheduledQuotaSetMonth = UserDefaults.standard.string(forKey: "scheduledExitQuotaSetMonth")
-        delayedBlockLockScreen = UserDefaults.standard.bool(forKey: "delayedBlockLockScreen")
-        delayedBlockAllowExtension = UserDefaults.standard.object(forKey: "delayedBlockAllowExtension") as? Bool ?? true
-        focusOverlayShowsTime = UserDefaults.standard.object(forKey: "focusOverlayShowsTime") as? Bool ?? true
+        lastEmergencyQuotaSetMonth = settings.string(.emergencyQuotaSetMonth)
+        lastScheduledQuotaSetMonth = settings.string(.scheduledExitQuotaSetMonth)
+        delayedBlockLockScreen = settings.bool(.delayedBlockLockScreen)
+        delayedBlockAllowExtension = settings.bool(.delayedBlockAllowExtension, default: true)
+        focusOverlayShowsTime = settings.bool(.focusOverlayShowsTime, default: true)
 
         appBlocker.updateBlockedApps(effectiveApps)
         appBlocker.setBlockingEnabled(blockingEnabled)
@@ -372,25 +354,28 @@ class AppState: ObservableObject {
 
         loadFocusTimer()
 
-        reminderEnabled = UserDefaults.standard.bool(forKey: "reminderEnabled")
-        let storedInterval = UserDefaults.standard.object(forKey: "reminderIntervalMinutes") as? Int
+        reminderEnabled = settings.bool(.reminderEnabled)
+        let storedInterval = settings.optionalInt(.reminderIntervalMinutes)
         reminderIntervalMinutes = storedInterval ?? 30
         if reminderIntervalMinutes < 1 { reminderIntervalMinutes = 1 }
         startReminderLoop()
 
-        remindBlockingNoFocus = UserDefaults.standard.bool(forKey: "remindBlockingNoFocus")
-        let storedBNF = UserDefaults.standard.object(forKey: "blockingNoFocusIntervalMinutes") as? Int
+        remindBlockingNoFocus = settings.bool(.remindBlockingNoFocus)
+        let storedBNF = settings.optionalInt(.blockingNoFocusIntervalMinutes)
         blockingNoFocusIntervalMinutes = storedBNF ?? 30
         if blockingNoFocusIntervalMinutes < 1 { blockingNoFocusIntervalMinutes = 1 }
         startBlockingNoFocusLoop()
 
-        coolingEnabled = UserDefaults.standard.bool(forKey: "coolingEnabled")
-        let storedCooling = UserDefaults.standard.object(forKey: "coolingMinutes") as? Int
+        coolingEnabled = settings.bool(.coolingEnabled)
+        let storedCooling = settings.optionalInt(.coolingMinutes)
         coolingMinutes = storedCooling ?? 5
         if coolingMinutes < 1 { coolingMinutes = 1 }
-        remindFocusTimerAfterBlock = UserDefaults.standard.object(forKey: "remindFocusTimerAfterBlock") as? Bool ?? true
-        remindDelayedBlockAfterUnblock = UserDefaults.standard.object(forKey: "remindDelayedBlockAfterUnblock") as? Bool ?? true
-        remindFocusTimerAfterEnd = UserDefaults.standard.object(forKey: "remindFocusTimerAfterEnd") as? Bool ?? false
+        remindFocusTimerAfterBlock = settings.bool(.remindFocusTimerAfterBlock, default: true)
+        remindDelayedBlockAfterUnblock = settings.bool(.remindDelayedBlockAfterUnblock, default: true)
+        remindFocusTimerAfterEnd = settings.bool(.remindFocusTimerAfterEnd, default: false)
+        remindCountdownManualEnd = settings.bool(.remindCountdownManualEnd, default: true)
+        remindRestManualEnd = settings.bool(.remindRestManualEnd, default: true)
+        breakGlassEnabled = settings.bool(.breakGlassEnabled)
 
         loadPrompts()
         loadToolboxLinks()
@@ -402,25 +387,26 @@ class AppState: ObservableObject {
     /// 而打包 .app 的域是 com.focuspause.app，两边配置可能各存一份。
     /// 首次以 .app 运行时，把旧域的键复制进当前域（当前域已有的键不覆盖）。
     private func migrateLegacyDefaultsIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: "didMigrateLegacyDefaults") else { return }
-        UserDefaults.standard.set(true, forKey: "didMigrateLegacyDefaults")
+        guard !settings.bool(.didMigrateLegacyDefaults) else { return }
+        settings.set(true, for: .didMigrateLegacyDefaults)
         guard let legacy = UserDefaults(suiteName: "FocusPause") else { return }
-        let keys = [
-            "prompts", "toolboxLinks", "toolboxGroups",
-            "reminderEnabled", "reminderIntervalMinutes",
-            "coolingEnabled", "coolingMinutes",
-            "remindFocusTimerAfterBlock", "remindDelayedBlockAfterUnblock", "remindFocusTimerAfterEnd",
-            "remindBlockingNoFocus", "blockingNoFocusIntervalMinutes",
-            "launchAtLogin", "blockingEnabled",
-            "delayedBlockLockScreen", "delayedBlockAllowExtension",
-            "focusOverlayShowsTime",
-            "ignoredUpdateVersion",
+        let keys: [AppSettingsStore.Key] = [
+            .prompts, .toolboxLinks, .toolboxGroups,
+            .reminderEnabled, .reminderIntervalMinutes,
+            .coolingEnabled, .coolingMinutes,
+            .remindFocusTimerAfterBlock, .remindDelayedBlockAfterUnblock, .remindFocusTimerAfterEnd,
+            .remindCountdownManualEnd, .remindRestManualEnd,
+            .remindBlockingNoFocus, .blockingNoFocusIntervalMinutes,
+            .launchAtLogin, .blockingEnabled,
+            .delayedBlockLockScreen, .delayedBlockAllowExtension,
+            .focusOverlayShowsTime, .breakGlassEnabled,
+            .ignoredUpdateVersion,
         ]
         var migrated = false
         for key in keys {
-            guard UserDefaults.standard.object(forKey: key) == nil,
-                  let value = legacy.object(forKey: key) else { continue }
-            UserDefaults.standard.set(value, forKey: key)
+            guard settings.object(key) == nil,
+                  let value = legacy.object(forKey: key.rawValue) else { continue }
+            settings.set(value, for: key)
             migrated = true
         }
         if migrated {
@@ -455,6 +441,16 @@ class AppState: ObservableObject {
         emergencyUsesThisMonth = loaded.emergencyUsesThisMonth
         scheduledExitUsesThisMonth = loaded.scheduledExitUsesThisMonth ?? 0
         lastResetMonth = loaded.lastResetMonth
+        breakGlassCooldownEnd = loaded.breakGlassCooldownEnd
+        breakGlassLastAttemptDay = loaded.breakGlassLastAttemptDay
+
+        // Restore an active rest timer; it must survive app restarts.
+        if loaded.restActive == true, let restEnd = loaded.restEnd, restEnd <= Date() {
+            loaded.restActive = false
+            loaded.restEnd = nil
+            loaded.restGoal = nil
+            FocusLogger.info("Discarded expired persisted rest timer")
+        }
 
         // Reset transient timer state — will be repopulated below
         focusTimerActive = false
@@ -468,6 +464,22 @@ class AppState: ObservableObject {
         delayedBlockNextRetryAt = nil
         delayedBlockGoal = loaded.delayedBlockGoal
         focusTimerGoal = loaded.focusTimerGoal
+
+        // Resume active rest timer before other timers.
+        if loaded.restActive == true, let end = loaded.restEnd, end > Date() {
+            restActive = true
+            restEnd = end
+            restGoal = loaded.restGoal
+            restMinutes = loaded.restMinutes ?? 6
+            goalOverlayDismissedByUser = false
+            restTimerEngine.onExpire = { [weak self] in
+                Task { @MainActor in self?.restExpired() }
+            }
+            restTimerEngine.start(endTimestamp: end)
+            refreshGoalOverlay()
+            FocusLogger.info("Resumed active rest timer, ends at \(end)")
+            return
+        }
 
         // Resume active 正计时（无结束时间、向上计时）
         if (loaded.kind ?? .focus) == .focus, loaded.endTimestamp == nil, let start = loaded.focusTimerStart {
@@ -526,6 +538,10 @@ class AppState: ObservableObject {
     }
 
     func startFocusTimer(minutes: Int, goal: String? = nil) {
+        guard !restActive else {
+            lastError = "休息中，结束后再开始专注"
+            return
+        }
         guard !delayedBlockActive else {
             lastError = "延时屏蔽进行中，无法启动专注计时"
             return
@@ -554,6 +570,10 @@ class AppState: ObservableObject {
 
     /// 开始「正计时」：无结束时间、向上计时。结束需密码且不消耗紧急退出额度。
     func startFocusTimerElapsed(goal: String? = nil) {
+        guard !restActive else {
+            lastError = "休息中，结束后再开始专注"
+            return
+        }
         guard !delayedBlockActive else {
             lastError = "延时屏蔽进行中，无法启动专注计时"
             return
@@ -598,6 +618,9 @@ class AppState: ObservableObject {
         saveFocusTimer()
         refreshGoalOverlay()
         FocusLogger.info("Ended elapsed focus timer (no quota used)")
+        if remindFocusTimerAfterEnd {
+            startFocusEndReminderLoop()
+        }
     }
 
     func focusTimerExpired() {
@@ -633,6 +656,11 @@ class AppState: ObservableObject {
             focusCountdownStart = nil
             focusTimerGoal = nil
             focusTimerEngine.stop()
+            if remindCountdownManualEnd {
+                DispatchQueue.main.async { [weak self] in
+                    self?.presentFocusEndReminder()
+                }
+            }
         }
         saveFocusTimer()
         refreshGoalOverlay()
@@ -663,6 +691,187 @@ class AppState: ObservableObject {
         return true
     }
 
+
+    // MARK: - Break-glass emergency unlock
+
+    static let breakGlassConfirmationPhrase = "我确认这是真实的紧急情况"
+    static let breakGlassCooldownSeconds: TimeInterval = 5 * 60
+
+    private static func currentDayString(for date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    var breakGlassHardLockQuotaExhausted: Bool {
+        if focusTimerActive {
+            return emergencyUsesThisMonth >= emergencyQuota
+        }
+        if isScheduledLockActive {
+            return scheduledExitUsesThisMonth >= scheduledExitQuota
+        }
+        return false
+    }
+
+    var canConfigureBreakGlass: Bool {
+        !blockingEnabled &&
+        !focusTimerActive &&
+        !restActive &&
+        !delayedBlockActive &&
+        !delayedBlockPendingAuth &&
+        !isScheduledLockActive &&
+        breakGlassCooldownEnd == nil
+    }
+
+    /// 额度用完的硬锁中也允许从设置启用，否则会产生无法救援的死角。
+    var canEnableBreakGlassDuringLock: Bool {
+        !breakGlassEnabled &&
+        breakGlassHardLockQuotaExhausted &&
+        breakGlassCooldownEnd == nil &&
+        breakGlassLastAttemptDay != Self.currentDayString()
+    }
+
+    func canStartBreakGlassUnlock(at date: Date = Date()) -> Bool {
+        breakGlassEnabled &&
+        breakGlassHardLockQuotaExhausted &&
+        breakGlassCooldownEnd == nil &&
+        breakGlassLastAttemptDay != Self.currentDayString(for: date)
+    }
+
+    func isBreakGlassInCooldown(at date: Date = Date()) -> Bool {
+        guard let end = breakGlassCooldownEnd else { return false }
+        return date < end
+    }
+
+    func isBreakGlassReadyToComplete(at date: Date = Date()) -> Bool {
+        guard let end = breakGlassCooldownEnd else { return false }
+        return date >= end
+    }
+
+    func setBreakGlassEnabled(_ enabled: Bool, password: String, confirmationPhrase: String = "") -> Bool {
+        if enabled {
+            guard canConfigureBreakGlass || canEnableBreakGlassDuringLock else {
+                lastError = "应急解锁当前不可启用"
+                return false
+            }
+        } else {
+            guard canConfigureBreakGlass else {
+                lastError = "存在屏蔽或冷静期时，不能关闭应急解锁"
+                return false
+            }
+        }
+        guard KeychainPassword.verify(password) else {
+            lastError = "密码错误"
+            return false
+        }
+        if enabled {
+            guard confirmationPhrase.trimmingCharacters(in: .whitespacesAndNewlines) == Self.breakGlassConfirmationPhrase else {
+                lastError = "确认语句不一致"
+                return false
+            }
+        }
+
+        breakGlassEnabled = enabled
+        settings.set(enabled, for: .breakGlassEnabled)
+        FocusLogger.info("Break-glass unlocked setting changed: \(enabled)")
+        return true
+    }
+
+    @discardableResult
+    func startBreakGlassUnlock(password: String, confirmationPhrase: String) -> Bool {
+        guard canStartBreakGlassUnlock() else {
+            lastError = "应急解锁当前不可用"
+            return false
+        }
+        guard helperInstalled, !helperNeedsRepair else {
+            lastError = "后台助手不可用，请先修复后再试"
+            return false
+        }
+        guard KeychainPassword.verify(password) else {
+            lastError = "密码错误"
+            return false
+        }
+        guard confirmationPhrase.trimmingCharacters(in: .whitespacesAndNewlines) == Self.breakGlassConfirmationPhrase else {
+            lastError = "确认语句不一致"
+            return false
+        }
+
+        let today = Self.currentDayString()
+        breakGlassCooldownEnd = Date().addingTimeInterval(Self.breakGlassCooldownSeconds)
+        breakGlassLastAttemptDay = today
+        saveFocusTimer()
+        refreshGoalOverlay()
+        FocusLogger.info("Break-glass cooldown started, ends at \(breakGlassCooldownEnd!)")
+        return true
+    }
+
+    func completeBreakGlassUnlock() async {
+        guard isBreakGlassReadyToComplete() else {
+            lastError = "应急解锁冷静期未结束"
+            return
+        }
+
+        FocusLogger.info("Break-glass unlock completing")
+        isProcessing = true
+        onBlockingStateChanged?()
+
+        // Keep local locks intact until the privileged helper confirms hosts cleanup.
+        let releasedOccurrenceKey = activeOccurrenceKey()
+        do {
+            try await HostsBlocker.clear()
+        } catch {
+            FocusLogger.error("Break-glass unlock failed: \(error.localizedDescription)")
+            lastError = "应急解锁失败：\(error.localizedDescription)"
+            isProcessing = false
+            onBlockingStateChanged?()
+            return
+        }
+
+        // System-level rules are gone; now stop every in-app timer/lock.
+        restTimerEngine.stop()
+        focusTimerEngine.stop()
+        scheduledBlockTask?.cancel()
+        pendingAlertTask?.cancel()
+
+        restActive = false
+        restEnd = nil
+        restGoal = nil
+        focusTimerActive = false
+        focusTimerEnd = nil
+        focusTimerStart = nil
+        focusCountdownStart = nil
+        focusTimerGoal = nil
+        delayedBlockActive = false
+        delayedBlockEnd = nil
+        delayedBlockPendingAuth = false
+        delayedBlockRetryCount = 0
+        delayedBlockNextRetryAt = nil
+        delayedBlockGoal = nil
+        goalOverlayDismissedByUser = false
+
+        if let key = releasedOccurrenceKey {
+            setReleasedOccurrence(key)
+        }
+        blockingEnabled = false
+        appBlocker.setBlockingEnabled(false)
+        lastError = nil
+
+        appBlocker.stop()
+        cooldownTask?.cancel()
+        coolDownEndsAt = nil
+        stopFocusEndReminder()
+        stopBlockingNoFocusLoop()
+        stopPendingAlertLoop()
+        cancelAllNudges()
+        breakGlassCooldownEnd = nil
+        refreshGoalOverlay()
+        _ = await save()
+        saveFocusTimer()
+        isProcessing = false
+        onBlockingStateChanged?()
+        FocusLogger.info("Break-glass unlock completed")
+    }
+
     private func saveFocusTimer() {
         let storage = FocusTimerState(kind: activeTimerKind,
                                       endTimestamp: activeTimerKind != nil ? (focusTimerActive ? focusTimerEnd : delayedBlockEnd) : nil,
@@ -674,7 +883,13 @@ class AppState: ObservableObject {
                                       focusTimerGoal: focusTimerGoal,
                                       scheduledExitUsesThisMonth: scheduledExitUsesThisMonth,
                                       focusTimerStart: focusTimerStart,
-                                      focusCountdownStart: focusCountdownStart)
+                                      focusCountdownStart: focusCountdownStart,
+                                      breakGlassCooldownEnd: breakGlassCooldownEnd,
+                                      breakGlassLastAttemptDay: breakGlassLastAttemptDay,
+                                      restActive: restActive,
+                                      restEnd: restEnd,
+                                      restGoal: restGoal,
+                                      restMinutes: restMinutes)
         do {
             let data = try JSONEncoder().encode(storage)
             try data.write(to: focusTimerURL)
@@ -685,9 +900,6 @@ class AppState: ObservableObject {
     }
 
     // MARK: - 定时屏蔽（每天重复的多段时间段）
-
-    private let scheduledWindowsKey = "scheduledWindows"
-    private let scheduledReleasedKey = "scheduledReleasedOccurrenceKey"
 
     func setScheduledWindows(_ windows: [ScheduledWindow]) {
         scheduledWindows = windows
@@ -709,21 +921,21 @@ class AppState: ObservableObject {
 
     private func saveScheduledWindows() {
         guard let data = try? JSONEncoder().encode(scheduledWindows) else { return }
-        UserDefaults.standard.set(data, forKey: scheduledWindowsKey)
+        settings.set(data, for: .scheduledWindows)
     }
 
     private func loadScheduledWindows() {
-        if let data = UserDefaults.standard.data(forKey: scheduledWindowsKey),
+        if let data = settings.data(.scheduledWindows),
            let saved = try? JSONDecoder().decode([ScheduledWindow].self, from: data) {
             scheduledWindows = saved
         }
-        releasedOccurrenceKey = UserDefaults.standard.string(forKey: scheduledReleasedKey)
+        releasedOccurrenceKey = settings.string(.scheduledReleasedOccurrenceKey)
         rescheduleScheduledBlock()
     }
 
     private func setReleasedOccurrence(_ key: String?) {
         releasedOccurrenceKey = key
-        UserDefaults.standard.set(key, forKey: scheduledReleasedKey)
+        settings.set(key, for: .scheduledReleasedOccurrenceKey)
     }
 
     /// 定期 tick：进入某时间段时确保屏蔽开启；被放弃的时间段过期后清理标记。
@@ -836,7 +1048,7 @@ class AppState: ObservableObject {
     /// 全拦总开关：开启后所有屏蔽状态都屏蔽全部网站 + App。
     func setForceBlockAll(_ on: Bool) {
         forceBlockAll = on
-        UserDefaults.standard.set(on, forKey: "forceBlockAll")
+        settings.set(on, for: .forceBlockAll)
         // 若正在屏蔽，重写一遍 hosts + 更新 app 名单，让全拦立即生效。
         if blockingEnabled {
             Task {
@@ -860,6 +1072,10 @@ class AppState: ObservableObject {
     // MARK: - Delayed block timer
 
     func startDelayedBlock(minutes: Int, goal: String? = nil) {
+        guard !restActive else {
+            lastError = "休息中，结束后再开始延时屏蔽"
+            return
+        }
         guard !blockingEnabled else {
             lastError = "屏蔽已开启，无需延时屏蔽"
             return
@@ -885,28 +1101,137 @@ class AppState: ObservableObject {
         FocusLogger.info("Started delayed-block timer: \(minutes) min, ends at \(end)")
     }
 
+
+    // MARK: - 休息计时
+
+    /// 休息期间遮断其它提醒，结束后再弹一次「休息结束」。
+    func startRest(minutes: Int, event: String? = nil) {
+        guard !restActive else { return }
+        guard minutes > 0 else { return }
+        guard blockingEnabled else {
+            lastError = "请先开启屏蔽再休息"
+            return
+        }
+        guard !focusTimerActive else {
+            lastError = "专注计时进行中，结束后再休息"
+            return
+        }
+        cancelAllNudges()
+        stopFocusEndReminder()
+        stopBlockingNoFocusLoop()
+        restTimerEngine.stop()
+        restActive = true
+        restEnd = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        restGoal = event?.isEmpty == true ? nil : event
+        restMinutes = minutes
+        restTimerEngine.onExpire = { [weak self] in
+            Task { @MainActor in self?.restExpired() }
+        }
+        restTimerEngine.start(endTimestamp: restEnd!)
+        refreshGoalOverlay()
+        FocusLogger.info("Rest started: \(minutes) min, ends at \(restEnd!)")
+    }
+
+    func cancelRest() {
+        guard restActive else { return }
+        restTimerEngine.stop()
+        restActive = false
+        restEnd = nil
+        restGoal = nil
+        saveFocusTimer()
+        refreshGoalOverlay()
+        if remindRestManualEnd {
+            presentRestEndReminder()
+        }
+    }
+
+    func restExpired() {
+        FocusLogger.info("Rest timer expired")
+        restActive = false
+        restEnd = nil
+        restGoal = nil
+        restTimerEngine.stop()
+        saveFocusTimer()
+        refreshGoalOverlay()
+        presentRestEndReminder()
+    }
+
+    private func presentRestEndReminder() {
+        guard beginReminderModal() else { return }
+        defer { endReminderModal() }
+        let result = PromptPanelPresenter.run(PromptPanelConfig(
+            title: "休息结束",
+            icon: "cup.and.saucer.fill",
+            section1Title: "休息好了",
+            message: "休息一下，接下来是继续专注，还是再休息一会儿都会尊重你。",
+            presets: [("25 分钟", 25), ("30 分钟", 30), ("60 分钟", 60)],
+            showGoal: true,
+            goalPlaceholder: "这次想专注完成什么？",
+            actionItems: actionPrompts,
+            textItems: textPrompts,
+            primaryTitle: "开始",
+            showModePicker: true,
+            elapsedPrimaryTitle: "开始正计时",
+            secondaryTitle: "取消",
+            tertiaryTitle: "稍后提醒",
+            showRest: true,
+            restTitle: "再休息一会儿",
+            restPlaceholder: "休息时想做什么？",
+            restDefaultMinutes: 6,
+            showHints: false,
+            showTextHint: true
+        ))
+        switch result.choice {
+        case .preset(let minutes):
+            startFocusTimer(minutes: minutes, goal: result.goal)
+        case .custom(let minutes) where minutes > 0:
+            startFocusTimer(minutes: minutes, goal: result.goal)
+        case .elapsed:
+            startFocusTimerElapsed(goal: result.goal)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
+        case .tertiary:
+            scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &focusEndNudgeTask) { [weak self] in
+                guard let self, !self.focusTimerActive else { return }
+                self.presentRestEndReminder()
+            }
+        default:
+            break
+        }
+    }
+
     /// 专注计时/延时屏蔽期间显示悬浮窗（无论是否填写事件），
     /// 事件可选、倒计时可选（专注计时是否显示时间由设置控制）。
     /// 尊重用户对当前会话的一次性关闭。
     private func refreshGoalOverlay() {
-        let shouldShow = (focusTimerActive || delayedBlockActive) && !goalOverlayDismissedByUser
-        FocusLogger.info("refreshGoalOverlay — focus\(focusTimerActive) delayed\(delayedBlockActive) dismissed\(goalOverlayDismissedByUser) → \(shouldShow ? "show" : "hide")")
+        let shouldShow = (restActive || focusTimerActive || delayedBlockActive) && !goalOverlayDismissedByUser
+        FocusLogger.info("refreshGoalOverlay — rest\(restActive) focus\(focusTimerActive) delayed\(delayedBlockActive) dismissed\(goalOverlayDismissedByUser) → \(shouldShow ? "show" : "hide")")
         guard shouldShow else {
             goalOverlay.hide()
             return
         }
-        let title = focusTimerActive ? (isElapsedFocus ? "正计时中" : "专注计时中") : "延时屏蔽中"
+        let title: String
         let goal = activeGoal
         let end: Date?
         let elapsedStart: Date?
-        if isElapsedFocus {
-            end = nil
-            elapsedStart = focusTimerStart
-        } else if delayedBlockActive {
-            end = delayedBlockEnd
+        if restActive {
+            title = "休息中"
+            end = restEnd
             elapsedStart = nil
+        } else if focusTimerActive {
+            title = isElapsedFocus ? "正计时中" : "专注计时中"
+            if isElapsedFocus {
+                end = nil
+                elapsedStart = focusTimerStart
+            } else {
+                end = focusOverlayShowsTime ? focusTimerEnd : nil
+                elapsedStart = nil
+            }
         } else {
-            end = focusOverlayShowsTime ? focusTimerEnd : nil
+            title = "延时屏蔽中"
+            end = delayedBlockEnd
             elapsedStart = nil
         }
         goalOverlay.show(title: title, goal: goal, end: end, elapsedStart: elapsedStart) { [weak self] in
@@ -1176,8 +1501,8 @@ class AppState: ObservableObject {
             lastError = "保存设置失败：\(error.localizedDescription)"
             return false
         }
-        UserDefaults.standard.set(blockingEnabled, forKey: "blockingEnabled")
-        UserDefaults.standard.set(launchAtLogin, forKey: "launchAtLogin")
+        settings.set(blockingEnabled, for: .blockingEnabled)
+        settings.set(launchAtLogin, for: .launchAtLogin)
 
         appBlocker.updateBlockedApps(effectiveApps)
         appBlocker.setBlockingEnabled(blockingEnabled)
@@ -1325,6 +1650,10 @@ class AppState: ObservableObject {
     }
 
     func disableBlocking() async {
+        guard !restActive else {
+            lastError = "休息中，请先结束休息再解除屏蔽"
+            return
+        }
         guard coolDownRemaining <= 0 else {
             lastError = "冷静期内无法解除屏蔽，剩余 \(Int(coolDownRemaining) / 60) 分 \(Int(coolDownRemaining) % 60) 秒"
             return
@@ -1368,8 +1697,12 @@ class AppState: ObservableObject {
             lastError = "定时屏蔽中，请在「计时模式 → 定时屏蔽」页面使用紧急退出"
             return
         }
+        if delayedBlockActive {
+            blockNow()
+            return
+        }
         guard !isLocked else {
-            lastError = "专注计时中，无法修改屏蔽状态"
+            lastError = restActive ? "休息中，请先结束休息再修改屏蔽状态" : "专注计时中，无法修改屏蔽状态"
             return
         }
         if blockingEnabled {
@@ -1461,7 +1794,7 @@ class AppState: ObservableObject {
 
     func setReminderEnabled(_ enabled: Bool) {
         reminderEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "reminderEnabled")
+        settings.set(enabled, for: .reminderEnabled)
         if enabled {
             startReminderLoop()
         } else {
@@ -1473,13 +1806,13 @@ class AppState: ObservableObject {
         var v = minutes
         if v < 1 { v = 1 }
         reminderIntervalMinutes = v
-        UserDefaults.standard.set(v, forKey: "reminderIntervalMinutes")
+        settings.set(v, for: .reminderIntervalMinutes)
         restartReminderIfNeeded()
     }
 
     func setCoolingEnabled(_ enabled: Bool) {
         coolingEnabled = enabled
-        UserDefaults.standard.set(enabled, forKey: "coolingEnabled")
+        settings.set(enabled, for: .coolingEnabled)
         if !enabled {
             cooldownTask?.cancel()
             coolDownEndsAt = nil
@@ -1490,18 +1823,56 @@ class AppState: ObservableObject {
         var v = minutes
         if v < 1 { v = 1 }
         coolingMinutes = v
-        UserDefaults.standard.set(v, forKey: "coolingMinutes")
+        settings.set(v, for: .coolingMinutes)
     }
 
     func setFocusOverlayShowsTime(_ shows: Bool) {
         focusOverlayShowsTime = shows
-        UserDefaults.standard.set(shows, forKey: "focusOverlayShowsTime")
+        settings.set(shows, for: .focusOverlayShowsTime)
         refreshGoalOverlay()
+    }
+
+    func setDelayedBlockLockScreen(_ enabled: Bool) {
+        delayedBlockLockScreen = enabled
+        settings.set(enabled, for: .delayedBlockLockScreen)
+    }
+
+    func setDelayedBlockAllowExtension(_ enabled: Bool) {
+        delayedBlockAllowExtension = enabled
+        settings.set(enabled, for: .delayedBlockAllowExtension)
+    }
+
+    func setRemindFocusTimerAfterEnd(_ enabled: Bool) {
+        remindFocusTimerAfterEnd = enabled
+        settings.set(enabled, for: .remindFocusTimerAfterEnd)
+        if !enabled {
+            stopFocusEndReminder()
+        }
+    }
+
+    func setRemindCountdownManualEnd(_ enabled: Bool) {
+        remindCountdownManualEnd = enabled
+        settings.set(enabled, for: .remindCountdownManualEnd)
+    }
+
+    func setRemindRestManualEnd(_ enabled: Bool) {
+        remindRestManualEnd = enabled
+        settings.set(enabled, for: .remindRestManualEnd)
+    }
+
+    func setRemindFocusTimerAfterBlock(_ enabled: Bool) {
+        remindFocusTimerAfterBlock = enabled
+        settings.set(enabled, for: .remindFocusTimerAfterBlock)
+    }
+
+    func setRemindDelayedBlockAfterUnblock(_ enabled: Bool) {
+        remindDelayedBlockAfterUnblock = enabled
+        settings.set(enabled, for: .remindDelayedBlockAfterUnblock)
     }
 
     func setRemindBlockingNoFocus(_ enabled: Bool) {
         remindBlockingNoFocus = enabled
-        UserDefaults.standard.set(enabled, forKey: "remindBlockingNoFocus")
+        settings.set(enabled, for: .remindBlockingNoFocus)
         if enabled {
             startBlockingNoFocusLoop()
         } else {
@@ -1513,7 +1884,7 @@ class AppState: ObservableObject {
         var v = minutes
         if v < 1 { v = 1 }
         blockingNoFocusIntervalMinutes = v
-        UserDefaults.standard.set(v, forKey: "blockingNoFocusIntervalMinutes")
+        settings.set(v, for: .blockingNoFocusIntervalMinutes)
         restartBlockingNoFocusIfNeeded()
     }
 
@@ -1591,8 +1962,10 @@ class AppState: ObservableObject {
             goalPlaceholder: "这段时间想做什么？",
             actionItems: actionPrompts,
             textItems: textPrompts,
-            primaryTitle: "延时屏蔽计时",
-            sectionActionTitle: "立即屏蔽",
+            primaryTitle: "立即屏蔽",
+            primaryTint: .focusActive,
+            primaryHint: "不需要延时？",
+            durationConfirmTitle: "延时屏蔽计时",
             secondaryTitle: "取消",
             tertiaryTitle: "稍后提醒"
         ))
@@ -1603,10 +1976,14 @@ class AppState: ObservableObject {
             startDelayedBlock(minutes: minutes, goal: result.goal)
         case .custom:
             lastError = "请输入有效的自定义分钟数"
-        case .sectionAction:
+        case .primary:
             Task { await enableBlocking() }   // 立即屏蔽
         case .pause:
             openPractice(.breathing)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
         case .tertiary:
             // 稍后提醒：设置开着→主循环已按间隔覆盖，无需额外调度器；关着→安排一次 nudge。
             if reminderEnabled { break }
@@ -1681,7 +2058,13 @@ class AppState: ObservableObject {
             showModePicker: true,
             elapsedPrimaryTitle: "开始正计时",
             secondaryTitle: "取消",
-            tertiaryTitle: "稍后提醒"
+            tertiaryTitle: "稍后提醒",
+            showRest: true,
+            restTitle: "休息一下",
+            restPlaceholder: "休息时想做什么？",
+            restDefaultMinutes: 6,
+            showHints: false,
+            showTextHint: true
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1694,6 +2077,10 @@ class AppState: ObservableObject {
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
         case .tertiary:
             if remindBlockingNoFocus { break }   // 循环已覆盖，不额外调度
             scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &blockingNoFocusNudgeTask) { [weak self] in
@@ -1891,7 +2278,13 @@ class AppState: ObservableObject {
             showModePicker: true,
             elapsedPrimaryTitle: "开始正计时",
             secondaryTitle: "取消",
-            tertiaryTitle: "稍后提醒"
+            tertiaryTitle: "稍后提醒",
+            showRest: true,
+            restTitle: "休息一下",
+            restPlaceholder: "休息时想做什么？",
+            restDefaultMinutes: 6,
+            showHints: false,
+            showTextHint: true
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1904,6 +2297,10 @@ class AppState: ObservableObject {
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
         case .tertiary:
             if remindFocusTimerAfterEnd { break }   // 循环已覆盖，不额外调度
             scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &focusEndNudgeTask) { [weak self] in
@@ -1934,7 +2331,13 @@ class AppState: ObservableObject {
             showModePicker: true,
             elapsedPrimaryTitle: "开始正计时",
             secondaryTitle: "取消",
-            tertiaryTitle: "稍后提醒"
+            tertiaryTitle: "稍后提醒",
+            showRest: true,
+            restTitle: "休息一下",
+            restPlaceholder: "休息时想做什么？",
+            restDefaultMinutes: 6,
+            showHints: false,
+            showTextHint: true
         ))
         switch result.choice {
         case .preset(let minutes):
@@ -1947,6 +2350,10 @@ class AppState: ObservableObject {
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
             openPractice(.breathing)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
         case .tertiary:
             if remindBlockingNoFocus { break }   // 已屏蔽未专注的循环已覆盖该状态
             scheduleNudge(seconds: TimeInterval(blockingNoFocusIntervalMinutes * 60), task: &focusTimerReminderNudgeTask) { [weak self] in
@@ -1987,6 +2394,10 @@ class AppState: ObservableObject {
             lastError = "请输入有效的自定义分钟数"
         case .pause:
             openPractice(.breathing)
+        case .grounding:
+            openPractice(.grounding)
+        case .rest(let minutes):
+            startRest(minutes: minutes, event: result.restEvent)
         case .tertiary:
             if reminderEnabled { break }   // 未屏蔽提醒的循环已覆盖该状态
             scheduleNudge(seconds: TimeInterval(reminderIntervalMinutes * 60), task: &delayedBlockNudgeTask) { [weak self] in
@@ -2048,18 +2459,18 @@ class AppState: ObservableObject {
 
     private func savePrompts() {
         guard let data = try? JSONEncoder().encode(prompts) else { return }
-        UserDefaults.standard.set(data, forKey: "prompts")
+        settings.set(data, for: .prompts)
     }
 
     private func loadPrompts() {
-        if let data = UserDefaults.standard.data(forKey: "prompts"),
+        if let data = settings.data(.prompts),
            let saved = try? JSONDecoder().decode([PromptItem].self, from: data),
            !saved.isEmpty {
             prompts = saved
             return
         }
         // 迁移上一版「鼓励语」卡片，保留用户已写文案。
-        if let data = UserDefaults.standard.data(forKey: "encouragementCards"),
+        if let data = settings.data(.encouragementCards),
            let saved = try? JSONDecoder().decode([EncouragementCard].self, from: data),
            !saved.isEmpty {
             prompts = saved.map { PromptItem(kind: .text, text: $0.text) }
@@ -2168,16 +2579,16 @@ class AppState: ObservableObject {
 
     private func saveToolboxGroups() {
         guard let data = try? JSONEncoder().encode(toolboxGroups) else { return }
-        UserDefaults.standard.set(data, forKey: "toolboxGroups")
+        settings.set(data, for: .toolboxGroups)
     }
 
     private func loadToolboxLinks() {
-        if let data = UserDefaults.standard.data(forKey: "toolboxGroups"),
+        if let data = settings.data(.toolboxGroups),
            let saved = try? JSONDecoder().decode([ToolboxGroup].self, from: data),
            !saved.isEmpty {
             var groups = saved
             // 合并旧扁平数据里缺失的链接（幂等：按 id 或 标题|地址 判重，只补缺失项）
-            if let flatData = UserDefaults.standard.data(forKey: "toolboxLinks"),
+            if let flatData = settings.data(.toolboxLinks),
                let flat = try? JSONDecoder().decode([ToolboxLink].self, from: flatData) {
                 let existingIDs = Set(groups.flatMap { $0.links.map(\.id) })
                 let existingPairs = Set(groups.flatMap { $0.links.map { "\($0.title)|\($0.url)" } })
@@ -2194,7 +2605,7 @@ class AppState: ObservableObject {
             return
         }
         // 迁移上一版扁平链接：收进一个分组
-        if let data = UserDefaults.standard.data(forKey: "toolboxLinks"),
+        if let data = settings.data(.toolboxLinks),
            let saved = try? JSONDecoder().decode([ToolboxLink].self, from: data),
            !saved.isEmpty {
             toolboxGroups = [ToolboxGroup(name: "常用", links: saved)]

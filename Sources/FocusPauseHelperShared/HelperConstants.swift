@@ -6,5 +6,6 @@ public enum HelperConstants {
     public static let daemonPlistPath = "/Library/LaunchDaemons/com.focuspause.helper.plist"
     public static let tokenPath = "/Library/Application Support/FocusPause/helper.token"
     public static let appBundleId = "com.focuspause.app"
+    public static let hostsPath = "/private/etc/hosts"
     public static let appExecutableSuffix = "/FocusPause.app/Contents/MacOS/FocusPause"
 }

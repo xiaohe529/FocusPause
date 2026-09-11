@@ -62,7 +62,7 @@ extension SettingsWindowController: NSWindowDelegate {
     // as a sheet (attached to the app's own window), so the app isn't activated
     // and no Dock icon appears. Hide the window only after the sheet is dismissed.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !UserDefaults.standard.bool(forKey: "minimizeHintSuppressed") else {
+        guard !AppSettingsStore.standard.bool(.minimizeHintSuppressed) else {
             hide()
             return false
         }
@@ -74,7 +74,7 @@ extension SettingsWindowController: NSWindowDelegate {
         alert.addButton(withTitle: "知道了")
         alert.beginSheetModal(for: sender) { [weak self] _ in
             if checkbox.state == .on {
-                UserDefaults.standard.set(true, forKey: "minimizeHintSuppressed")
+                AppSettingsStore.standard.set(true, for: .minimizeHintSuppressed)
             }
             self?.hide()
         }

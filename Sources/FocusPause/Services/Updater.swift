@@ -91,8 +91,8 @@ enum Updater {
     }
 
     static func compareVersions(_ a: String, _ b: String) -> ComparisonResult {
-        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
-        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        let pa = normalizedVersion(a).split(separator: ".").map { Int($0) ?? 0 }
+        let pb = normalizedVersion(b).split(separator: ".").map { Int($0) ?? 0 }
         let count = max(pa.count, pb.count)
         for i in 0..<count {
             let va = i < pa.count ? pa[i] : 0
@@ -101,5 +101,16 @@ enum Updater {
             if va > vb { return .orderedDescending }
         }
         return .orderedSame
+    }
+}
+extension Updater {
+    /// Removes optional whitespace and a single leading `v`; leaves pre-release
+    /// suffixes to the numeric fallback rather than corrupting digits inside a tag.
+    static func normalizedVersion(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if result.hasPrefix("v") {
+            result.removeFirst()
+        }
+        return result
     }
 }

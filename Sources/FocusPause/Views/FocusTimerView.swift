@@ -8,8 +8,16 @@ struct FocusTimerView: View {
     @State private var delayedGoal = ""
     @State private var configKind: FocusTimerState.Kind = .focus
     @State private var focusMode: FocusMode = .countdown
+    @State private var restEvent = ""
 
-    private enum FocusMode { case countdown, elapsed }
+    private var restMinutesBinding: Binding<Int> {
+        Binding(
+            get: { state.restMinutes },
+            set: { state.restMinutes = min(120, max(1, $0)) }
+        )
+    }
+
+    private enum FocusMode { case countdown, elapsed, rest }
 
     private let presets = [25, 30, 60]
 
@@ -23,13 +31,21 @@ struct FocusTimerView: View {
                     configPicker
                     switch configKind {
                     case .focus:
-                        if state.focusTimerActive {
+                        if state.restActive {
+                            restRunningView
+                        } else if state.focusTimerActive {
                             focusRunningView
+                        } else if state.delayedBlockActive {
+                            delayedBlockRunningView
+                        } else if !state.blockingEnabled {
+                            focusLockedNotice
                         } else {
                             focusConfigView
                         }
                     case .delayedBlock:
-                        if state.delayedBlockActive {
+                        if state.restActive {
+                            restRunningView
+                        } else if state.delayedBlockActive {
                             delayedBlockRunningView
                         } else {
                             delayedBlockConfigView
@@ -56,6 +72,28 @@ struct FocusTimerView: View {
     }
 
     @ViewBuilder
+    private var focusLockedNotice: some View {
+        SectionCard(
+            title: "专注计时需要先开启屏蔽",
+            icon: "lock.shield",
+            subtitle: "开启屏蔽后才能使用倒计时、正计时和休息。"
+        ) {
+            HStack {
+                Spacer()
+                Button {
+                    state.toggleBlocking()
+                } label: {
+                    Label("开启屏蔽", systemImage: "lock.fill")
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                .disabled(state.isProcessing)
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
     private var focusConfigView: some View {
         VStack(spacing: 16) {
             Image(systemName: "timer")
@@ -69,13 +107,14 @@ struct FocusTimerView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            // 模式：倒计时 / 正计时
+            // 模式：倒计时 / 正计时 / 休息（三者平行）
             Picker("模式", selection: $focusMode) {
                 Text("倒计时").tag(FocusMode.countdown)
                 Text("正计时").tag(FocusMode.elapsed)
+                Text("休息").tag(FocusMode.rest)
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: 260)
+            .frame(maxWidth: 320)
 
             if focusMode == .countdown {
                 presetAndCustomView(minutes: $focusCustomMinutes)
@@ -86,9 +125,7 @@ struct FocusTimerView: View {
                     hint: "开始计时后，它会悬浮在屏幕上方，提醒你别偏离。",
                     text: $focusGoal
                 )
-
-                focusOptionsCard
-            } else {
+            } else if focusMode == .elapsed {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("正计时")
                         .font(.headline)
@@ -107,6 +144,8 @@ struct FocusTimerView: View {
                     hint: "开始后悬浮窗会显示已用时，提醒你别偏离。",
                     text: $focusGoal
                 )
+            } else {
+                restConfigCard
             }
 
             if !state.blockingEnabled {
@@ -127,7 +166,7 @@ struct FocusTimerView: View {
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
                 .disabled(focusCustomMinutes < 1 || state.delayedBlockActive || !state.blockingEnabled)
-            } else {
+            } else if focusMode == .elapsed {
                 Button {
                     state.startFocusTimerElapsed(goal: focusGoal)
                     focusGoal = ""
@@ -138,8 +177,154 @@ struct FocusTimerView: View {
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
                 .disabled(state.delayedBlockActive || !state.blockingEnabled || state.focusTimerActive)
             }
+
+            if focusMode == .countdown {
+                focusOptionsCard
+            } else if focusMode == .elapsed {
+                elapsedOptionsCard
+            }
         }
         .padding()
+    }
+
+    @ViewBuilder
+    private var elapsedOptionsCard: some View {
+        SectionCard(title: "专注选项", icon: "switch.2", spacing: 4) {
+            Toggle(isOn: Binding(
+                get: { state.remindFocusTimerAfterEnd },
+                set: { newValue in
+                    state.setRemindFocusTimerAfterEnd(newValue)
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("结束时提醒开启下一轮")
+                        .font(.subheadline)
+                    Text("手动结束后会弹窗提醒开启下一轮")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+        }
+    }
+
+    @ViewBuilder
+    private var restConfigCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("休息", systemImage: "cup.and.saucer.fill")
+                    .font(.headline)
+                    .foregroundStyle(Color.focusAccent)
+                Spacer()
+                HStack(spacing: 6) {
+                    DialogNumberField(number: restMinutesBinding, allowedRange: 1...120)
+                        .frame(width: 54)
+                    Text("分钟")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("休息期间不弹提醒，结束后再继续；休息事件会悬浮提醒。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle(isOn: Binding(
+                get: { state.remindRestManualEnd },
+                set: { newValue in
+                    state.setRemindRestManualEnd(newValue)
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("主动结束后提醒")
+                        .font(.subheadline)
+                    Text("手动结束休息后，也弹窗询问开启下一轮")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            if !state.actionPrompts.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(state.actionPrompts.prefix(4)) { item in
+                        Button {
+                            restEvent = restEvent == item.text ? "" : item.text
+                        } label: {
+                            Text(item.text)
+                                .font(.caption)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(
+                                    restEvent == item.text
+                                        ? Color.focusAccent.opacity(0.18)
+                                        : Color.secondary.opacity(0.10),
+                                    in: Capsule()
+                                )
+                                .overlay {
+                                    Capsule().strokeBorder(
+                                        restEvent == item.text
+                                            ? Color.focusAccent.opacity(0.6)
+                                            : Color.clear,
+                                        lineWidth: 1
+                                    )
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            DialogTextField(
+                text: $restEvent,
+                placeholder: "休息时想做什么？",
+                height: 22
+            )
+
+            HStack {
+                Spacer()
+                Button {
+                    state.startRest(minutes: state.restMinutes, event: restEvent)
+                    restEvent = ""
+                } label: {
+                    Label("开始休息", systemImage: "cup.and.saucer.fill")
+                        .padding(.vertical, 5)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+            }
+        }
+        .padding(12)
+        .background(Color.focusAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private var restRunningView: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "cup.and.saucer.fill")
+                .font(.system(size: 40))
+                .foregroundStyle(Color.focusAccent)
+            Text("休息中")
+                .font(.title2.bold())
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(countdownString(at: context.date, end: state.restEnd))
+                    .font(.system(size: 52, weight: .light, design: .monospaced))
+                    .monospacedDigit()
+            }
+            if let goal = state.restGoal, !goal.isEmpty {
+                goalDisplayCard(goal)
+            }
+            Text("休息结束后会提醒你继续")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                state.cancelRest()
+            } label: {
+                Label("结束休息", systemImage: "xmark")
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(AlwaysActiveButtonStyle(color: .gray))
+        }
+        .padding(.vertical, 18)
     }
 
     @ViewBuilder
@@ -150,7 +335,7 @@ struct FocusTimerView: View {
                 .foregroundStyle(Color.focusAccent)
             Text("延时屏蔽")
                 .font(.title2.bold())
-            Text("开始计时后自由浏览，倒计时结束自动开启屏蔽。")
+            Text("开始延时后自由浏览，倒计时结束自动开启屏蔽。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -172,17 +357,17 @@ struct FocusTimerView: View {
                     text: $delayedGoal
                 )
 
-                delayedBlockOptionsCard
-
                 Button {
                     state.startDelayedBlock(minutes: delayedCustomMinutes, goal: delayedGoal)
                     delayedGoal = ""
                 } label: {
-                    Label("开始计时", systemImage: "play.fill")
+                    Label("开始延时", systemImage: "play.fill")
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                 .disabled(delayedCustomMinutes < 1 || state.blockingEnabled || state.focusTimerActive)
+
+                delayedBlockOptionsCard
             }
         }
         .padding()
@@ -297,7 +482,7 @@ struct FocusTimerView: View {
                 .disabled(state.scheduledExitUsesThisMonth >= state.scheduledExitQuota)
                 Spacer()
             }
-            Text("剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth)) 次 · 紧急退出只解除本次硬锁，屏蔽保持；其他时间段仍可编辑。")
+            Text("剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth)) 次 · 紧急退出只解除当前时间段锁定，屏蔽保持开启；其他时间段仍可编辑。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -465,8 +650,7 @@ struct FocusTimerView: View {
             Toggle(isOn: Binding(
                 get: { state.delayedBlockLockScreen },
                 set: { newValue in
-                    state.delayedBlockLockScreen = newValue
-                    UserDefaults.standard.set(newValue, forKey: "delayedBlockLockScreen")
+                    state.setDelayedBlockLockScreen(newValue)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -484,8 +668,7 @@ struct FocusTimerView: View {
             Toggle(isOn: Binding(
                 get: { state.delayedBlockAllowExtension },
                 set: {
-                    state.delayedBlockAllowExtension = $0
-                    UserDefaults.standard.set($0, forKey: "delayedBlockAllowExtension")
+                    state.setDelayedBlockAllowExtension($0)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -525,15 +708,31 @@ struct FocusTimerView: View {
             Toggle(isOn: Binding(
                 get: { state.remindFocusTimerAfterEnd },
                 set: {
-                    state.remindFocusTimerAfterEnd = $0
-                    UserDefaults.standard.set($0, forKey: "remindFocusTimerAfterEnd")
-                    if !$0 { state.stopFocusEndReminder() }
+                    state.setRemindFocusTimerAfterEnd($0)
                 }
             )) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("结束时提醒开启下一轮")
                         .font(.subheadline)
-                    Text("专注计时结束后，是否弹窗询问开启下一轮计时")
+                    Text("专注计时自然到点后，是否弹窗询问开启下一轮计时")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            Divider()
+
+            Toggle(isOn: Binding(
+                get: { state.remindCountdownManualEnd },
+                set: { newValue in
+                    state.setRemindCountdownManualEnd(newValue)
+                }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("主动结束后提醒")
+                        .font(.subheadline)
+                    Text("紧急退出倒计时后，也弹窗询问开启下一轮")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -554,22 +753,30 @@ struct FocusTimerView: View {
         }
     }
 
-    /// A compact read-only card showing the current session goal/plan.
+    /// A compact read-only chip showing the current session event/goal.
     private func goalDisplayCard(_ goal: String) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "target").foregroundStyle(Color.focusAccent)
-            Text("本次目标：\(goal)")
+            Image(systemName: "target")
                 .font(.subheadline)
+                .foregroundStyle(Color.focusAccent)
+            Text("事件")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(goal)
+                .font(.subheadline.weight(.medium))
                 .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.focusAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.focusAccent.opacity(0.10), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.focusAccent.opacity(0.25), lineWidth: 1))
+        .frame(maxWidth: 360)
     }
 
     @ViewBuilder
     private func presetAndCustomView(minutes: Binding<Int>) -> some View {
-        SectionCard(title: "时长设置", icon: "clock", subtitle: "选择预设，或输入 1–480 分钟。") {
+        SectionCard(title: "时长设置", icon: "clock") {
         VStack(alignment: .leading, spacing: 8) {
             Text("预设时长")
                 .font(.headline)
@@ -597,6 +804,10 @@ struct FocusTimerView: View {
                 }
                 Spacer()
             }
+
+            Text("选择预设，或输入 1–480 分钟。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         }
     }

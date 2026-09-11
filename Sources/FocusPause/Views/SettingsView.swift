@@ -26,8 +26,11 @@ struct SettingsView: View {
     @State private var newPassword = ""
     @State private var confirmPassword = ""
     @State private var passwordError: String = ""
-    @State private var showUninstallConfirm = false
-    @State private var isUninstalling = false
+    @State private var focusQuotaDraft: Int?
+    @State private var scheduledQuotaDraft: Int?
+    @State private var showBreakGlassSetup = false
+    @State private var breakGlassSetupDisabling = false
+    @State private var showBreakGlassUnlock = false
     @State private var recoveryInput1 = ""
     @State private var recoveryInput2 = ""
     @State private var revealedPassword: String?
@@ -45,6 +48,7 @@ struct SettingsView: View {
     @FocusState private var passwordFieldFocus: PasswordField?
 
     enum PasswordField: Hashable { case old, new, confirm }
+
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,6 +78,38 @@ struct SettingsView: View {
             footer
         }
         .frame(width: 500, height: 580)
+        .sheet(isPresented: $showBreakGlassSetup, onDismiss: {
+            breakGlassSetupDisabling = false
+        }) {
+            BreakGlassDialogView(
+                title: state.breakGlassEnabled ? "关闭应急解锁" : "启用应急解锁",
+                icon: "lock.open.rotation",
+                message: state.breakGlassEnabled
+                    ? "关闭后，紧急退出次数用完时将没有备用解锁方式。"
+                    : "仅用于紧急退出次数用完后的真实紧急情况。启用后仍需输入密码和确认语句，并等待 5 分钟冷静期。",
+                showConfirmationPhrase: !state.breakGlassEnabled,
+                submitTitle: state.breakGlassEnabled ? "确认关闭" : "确认启用"
+            ) { password, phrase in
+                state.setBreakGlassEnabled(
+                    !state.breakGlassEnabled,
+                    password: password,
+                    confirmationPhrase: phrase
+                )
+            }
+        }
+        .sheet(isPresented: $showBreakGlassUnlock, onDismiss: {
+            state.lastError = nil
+        }) {
+            BreakGlassDialogView(
+                title: "发起应急解锁",
+                icon: "lock.open.rotation",
+                message: "通过验证后进入 5 分钟冷静期；结束后会解除所有屏蔽。",
+                showConfirmationPhrase: true,
+                submitTitle: "进入冷静期"
+            ) { password, phrase in
+                state.startBreakGlassUnlock(password: password, confirmationPhrase: phrase)
+            }
+        }
         .onAppear {
             // 打开设置时不要自动把焦点落进任何输入框。
             DispatchQueue.main.async {
@@ -82,14 +118,6 @@ struct SettingsView: View {
         }
         .sheet(isPresented: $showPasswordSheet, onDismiss: resetPasswordFields) {
             passwordSheet
-        }
-        .alert("确认卸载助手", isPresented: $showUninstallConfirm) {
-            Button("取消", role: .cancel) {}
-            Button("卸载", role: .destructive) {
-                Task { await performUninstall() }
-            }
-        } message: {
-            Text("将卸载后台助手。下次开启屏蔽时需要重新授权安装。屏蔽规则与密码不会被清除。")
         }
     }
 
@@ -142,18 +170,13 @@ struct SettingsView: View {
                         Text(state.helperNeedsRepair
                              ? "已运行，但需要安全修复"
                              : state.helperInstalled
-                                 ? "已安装，屏蔽操作静默执行"
+                                 ? "已安装；删除 App 后会自动清理屏蔽"
                                  : "未安装，首次操作将请求授权")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if state.helperInstalled && !state.helperNeedsRepair {
-                        Button("卸载") { showUninstallConfirm = true }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(isUninstalling)
-                    } else {
+                    if !state.helperInstalled || state.helperNeedsRepair {
                         Button {
                             Task { await state.installHelper() }
                         } label: {
@@ -161,7 +184,6 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
-                        .disabled(isUninstalling || state.isInstallingHelper)
                     }
                 }
             }
@@ -191,22 +213,20 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
 
-                if state.reminderEnabled {
-                    HStack {
-                        Text("提醒间隔")
-                            .font(.subheadline)
-                        Spacer()
-                        MinuteField(value: state.reminderIntervalMinutes) { state.setReminderInterval(minutes: $0) }
-                        Text("分钟")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Stepper("", value: reminderIntervalBinding, in: 1...240, step: 5)
-                            .labelsHidden()
-                    }
-                    Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒；可直接输入数值。未屏蔽提醒点「稍后提醒」，也按此间隔再次提醒。")
-                        .font(.caption)
+                HStack {
+                    Text("提醒间隔")
+                        .font(.subheadline)
+                    Spacer()
+                    MinuteField(value: state.reminderIntervalMinutes) { state.setReminderInterval(minutes: $0) }
+                    Text("分钟")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    Stepper("", value: reminderIntervalBinding, in: 1...240, step: 5)
+                        .labelsHidden()
                 }
+                Text("屏蔽中、专注计时中、延时屏蔽中均不弹提醒；可直接输入数值。未屏蔽提醒点「稍后提醒」，也按此间隔再次提醒。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Divider()
 
@@ -224,22 +244,20 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
 
-                if state.remindBlockingNoFocus {
-                    HStack {
-                        Text("提醒间隔")
-                            .font(.subheadline)
-                        Spacer()
-                        MinuteField(value: state.blockingNoFocusIntervalMinutes) { state.setBlockingNoFocusInterval(minutes: $0) }
-                        Text("分钟")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Stepper("", value: blockingNoFocusIntervalBinding, in: 5...240, step: 5)
-                            .labelsHidden()
-                    }
-                    Text("专注计时进行中不提醒；「已屏蔽未专注」「屏蔽已开启」「专注计时结束」等的「稍后提醒」，也按此间隔再次提醒。")
-                        .font(.caption)
+                HStack {
+                    Text("提醒间隔")
+                        .font(.subheadline)
+                    Spacer()
+                    MinuteField(value: state.blockingNoFocusIntervalMinutes) { state.setBlockingNoFocusInterval(minutes: $0) }
+                    Text("分钟")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    Stepper("", value: blockingNoFocusIntervalBinding, in: 5...240, step: 5)
+                        .labelsHidden()
                 }
+                Text("专注计时进行中不提醒；「已屏蔽未专注」「屏蔽已开启」「专注计时结束」等的「稍后提醒」，也按此间隔再次提醒。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .focusCard()
         }
@@ -292,8 +310,7 @@ struct SettingsView: View {
                 Toggle(isOn: Binding(
                     get: { state.remindFocusTimerAfterBlock },
                     set: {
-                        state.remindFocusTimerAfterBlock = $0
-                        UserDefaults.standard.set($0, forKey: "remindFocusTimerAfterBlock")
+                        state.setRemindFocusTimerAfterBlock($0)
                     }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -309,8 +326,7 @@ struct SettingsView: View {
                 Toggle(isOn: Binding(
                     get: { state.remindDelayedBlockAfterUnblock },
                     set: {
-                        state.remindDelayedBlockAfterUnblock = $0
-                        UserDefaults.standard.set($0, forKey: "remindDelayedBlockAfterUnblock")
+                        state.setRemindDelayedBlockAfterUnblock($0)
                     }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -340,22 +356,39 @@ struct SettingsView: View {
                     title: "专注计时",
                     value: state.emergencyQuota,
                     locked: state.emergencyQuotaLockedThisMonth,
-                    set: { state.setEmergencyQuota($0) }
-                )
+                    draft: $focusQuotaDraft
+                ) { newValue in
+                    let ok = state.setEmergencyQuota(newValue)
+                    if ok { focusQuotaDraft = nil }
+                    return ok
+                }
                 Divider()
                 quotaRow(
                     title: "定时屏蔽",
                     value: state.scheduledExitQuota,
                     locked: state.scheduledExitQuotaLockedThisMonth,
-                    set: { state.setScheduledExitQuota($0) }
-                )
+                    draft: $scheduledQuotaDraft
+                ) { newValue in
+                    let ok = state.setScheduledExitQuota(newValue)
+                    if ok { scheduledQuotaDraft = nil }
+                    return ok
+                }
             }
             .focusCard()
         }
     }
 
-    private func quotaRow(title: String, value: Int, locked: Bool, set: @escaping (Int) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private func quotaRow(
+        title: String,
+        value: Int,
+        locked: Bool,
+        draft: Binding<Int?>,
+        onConfirm: @escaping (Int) -> Bool
+    ) -> some View {
+        let displayedValue = draft.wrappedValue ?? value
+        let hasDraft = draft.wrappedValue != nil && draft.wrappedValue != value
+
+        return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title)
                     .font(.subheadline)
@@ -366,13 +399,13 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text("\(value)")
+                    Text("\(displayedValue)")
                         .font(.subheadline)
                         .monospacedDigit()
                         .frame(minWidth: 24, alignment: .trailing)
                     Stepper("", value: Binding(
-                        get: { value },
-                        set: { _ = set($0) }
+                        get: { displayedValue },
+                        set: { draft.wrappedValue = $0 }
                     ), in: 1...5)
                     .labelsHidden()
                     .disabled(locked)
@@ -382,6 +415,26 @@ struct SettingsView: View {
                 Text("本月已设置，下个月开放调整")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if hasDraft {
+                HStack {
+                    Spacer()
+                    Button {
+                        _ = onConfirm(draft.wrappedValue ?? value)
+                    } label: {
+                        Label("确认调整", systemImage: "checkmark")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+
+                    Button("取消") {
+                        draft.wrappedValue = nil
+                    }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -426,6 +479,10 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("高级")
             VStack(alignment: .leading, spacing: 8) {
+                breakGlassCard
+
+                Divider()
+
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("为防止误操作，请输入恢复码 `123456789` 两次以查看当前屏蔽密码。")
@@ -508,6 +565,77 @@ struct SettingsView: View {
             }
             .focusCard()
         }
+    }
+
+    // MARK: - Break-glass
+
+    private var breakGlassCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: state.breakGlassEnabled ? "lock.open.rotation" : "lock.rotation")
+                    .foregroundStyle(state.breakGlassEnabled ? Color.focusDanger : Color.secondary)
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("应急解锁")
+                        .font(.subheadline)
+                    Text(state.breakGlassEnabled ? "已启用" : "未启用")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button(state.breakGlassEnabled ? "关闭" : "启用") {
+                    breakGlassSetupDisabling = state.breakGlassEnabled
+                    showBreakGlassSetup = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(state.breakGlassEnabled ? !state.canConfigureBreakGlass : !(state.canConfigureBreakGlass || state.canEnableBreakGlassDuringLock))
+            }
+
+            if let day = state.breakGlassLastAttemptDay {
+                Text("最近发起日期：\(day)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.breakGlassEnabled && state.canStartBreakGlassUnlock() {
+                Button {
+                    showBreakGlassUnlock = true
+                } label: {
+                    Label("发起应急解锁", systemImage: "lock.open.rotation")
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+            } else if let cooldownEnd = state.breakGlassCooldownEnd {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(alignment: .leading, spacing: 6) {
+                        if state.isBreakGlassReadyToComplete(at: context.date) {
+                            Button {
+                                Task { await state.completeBreakGlassUnlock() }
+                            } label: {
+                                Label("确认解除所有屏蔽", systemImage: "checkmark.circle.fill")
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+                        } else {
+                            let remaining = max(0, Int(cooldownEnd.timeIntervalSince(context.date)))
+                            Text("冷静期剩余 \(remaining / 60):\(String(format: "%02d", remaining % 60))")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Text("最后的备用解锁方式：仅用于紧急退出次数用完后的真实紧急情况。需输入密码和确认语句，等待 5 分钟后解除所有屏蔽；每天最多发起 1 次。屏蔽进行中也可以从这里启用。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .focusCard()
     }
 
     // MARK: - 软件更新
@@ -673,7 +801,7 @@ struct SettingsView: View {
         showPasswordSheet = false
     }
 
-    // MARK: - 找回密码 / 删除密码 / 卸载
+    // MARK: - 找回密码 / 删除密码
 
     private func recoverPassword() {
         guard recoveryInput1 == "123456789", recoveryInput1 == recoveryInput2 else {
@@ -708,19 +836,6 @@ struct SettingsView: View {
         deletePwdInput1 = ""
         deletePwdInput2 = ""
         FocusLogger.info("Password deleted via settings")
-    }
-
-    private func performUninstall() async {
-        isUninstalling = true
-        let ok = await HelperInstaller.uninstall()
-        if ok {
-            state.helperInstalled = false
-            state.helperNeedsRepair = false
-            state.helperInstallAttempted = false
-        } else {
-            recoveryError = "卸载失败，请稍后重试"
-        }
-        isUninstalling = false
     }
 
     // MARK: - Helpers

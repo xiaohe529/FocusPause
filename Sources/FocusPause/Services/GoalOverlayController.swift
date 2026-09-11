@@ -43,7 +43,7 @@ final class GoalOverlayController: NSWindowController {
         let size = vc.view.fittingSize
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
-            let origin = NSPoint(x: frame.maxX - size.width - 24, y: frame.minY + 24)
+            let origin = NSPoint(x: frame.minX + 24, y: frame.maxY - size.height - 24)
             window?.setFrame(NSRect(origin: origin, size: size), display: true)
         }
         window?.orderFrontRegardless()
@@ -66,7 +66,7 @@ struct GoalOverlayView: View {
             RoundedRectangle(cornerRadius: 3)
                 .fill(Color.focusAccent)
                 .frame(width: 4)
-            Image(systemName: "target")
+            Image(systemName: title == "休息中" ? "cup.and.saucer.fill" : "target")
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(Color.focusAccent)
             VStack(alignment: .leading, spacing: 3) {
