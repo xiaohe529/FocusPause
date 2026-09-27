@@ -89,12 +89,12 @@ class AppState: ObservableObject {
 
     // 正念：导航状态（弹窗可编程切页）+ 鼓励语
     enum PauseMode {
-        case breathing
+        case toolbox
         case grounding
         case cards
     }
     @Published var selectedTab = 0
-    @Published var pauseMode: PauseMode = .breathing
+    @Published var pauseMode: PauseMode = .toolbox
     @Published var prompts: [PromptItem] = []
     @Published var toolboxGroups: [ToolboxGroup] = []
 
@@ -1978,7 +1978,7 @@ class AppState: ObservableObject {
         case .primary:
             Task { await enableBlocking() }   // 立即屏蔽
         case .pause:
-            openPractice(.breathing)
+            openPractice(.toolbox)
         case .grounding:
             openPractice(.grounding)
         case .rest(let minutes):
@@ -2077,7 +2077,7 @@ class AppState: ObservableObject {
         case .elapsed:
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
-            openPractice(.breathing)
+            openPractice(.toolbox)
         case .grounding:
             openPractice(.grounding)
         case .rest(let minutes):
@@ -2298,7 +2298,7 @@ class AppState: ObservableObject {
         case .elapsed:
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
-            openPractice(.breathing)
+            openPractice(.toolbox)
         case .grounding:
             openPractice(.grounding)
         case .rest(let minutes):
@@ -2351,7 +2351,7 @@ class AppState: ObservableObject {
         case .elapsed:
             startFocusTimerElapsed(goal: result.goal)   // 正计时
         case .pause:
-            openPractice(.breathing)
+            openPractice(.toolbox)
         case .grounding:
             openPractice(.grounding)
         case .rest(let minutes):
@@ -2395,7 +2395,7 @@ class AppState: ObservableObject {
         case .custom:
             lastError = "请输入有效的自定义分钟数"
         case .pause:
-            openPractice(.breathing)
+            openPractice(.toolbox)
         case .grounding:
             openPractice(.grounding)
         case .rest(let minutes):

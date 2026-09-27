@@ -490,8 +490,8 @@ struct PracticePromptPanel: View {
             }
             .font(.body)
             .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.card))
+            .contentShape(RoundedRectangle(cornerRadius: FocusRadius.card))
         }
         .buttonStyle(.plain)
         .help("换一句")

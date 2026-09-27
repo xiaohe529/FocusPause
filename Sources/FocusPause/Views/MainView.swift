@@ -43,6 +43,18 @@ struct MainView: View {
 
             Divider()
 
+            // Content — each tab manages its own scrolling
+            Group {
+                switch state.selectedTab {
+                case 0: BlockControlView(state: state)
+                case 1: FocusTimerView(state: state)
+                default: PauseView(state: state)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.horizontal)
+            .padding(.top, 4)
+
             // Status banners
             VStack(spacing: 8) {
                 if state.restActive {
@@ -104,18 +116,6 @@ struct MainView: View {
                 }
             }
             .padding(.horizontal)
-
-            // Content — each tab manages its own scrolling
-            Group {
-                switch state.selectedTab {
-                case 0: BlockControlView(state: state)
-                case 1: FocusTimerView(state: state)
-                default: PauseView(state: state)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal)
-            .padding(.top, 4)
 
             // Bottom control bar (full-width bar, bottom margin only)
             controlBar

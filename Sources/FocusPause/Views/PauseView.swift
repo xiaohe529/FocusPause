@@ -8,7 +8,7 @@ struct PauseView: View {
         VStack(spacing: 0) {
             SubSegmentCard(
                 options: [
-                    .init(value: AppState.PauseMode.breathing, label: "我的工具箱", icon: "wrench.and.screwdriver"),
+                    .init(value: AppState.PauseMode.toolbox, label: "我的工具箱", icon: "wrench.and.screwdriver"),
                     .init(value: AppState.PauseMode.grounding, label: "五感着陆", icon: "5.circle"),
                     .init(value: AppState.PauseMode.cards, label: "一些提示", icon: "quote.bubble"),
                 ],
@@ -17,7 +17,7 @@ struct PauseView: View {
             .padding(.bottom, 12)
 
             switch state.pauseMode {
-            case .breathing: BreathingView(state: state)
+            case .toolbox: ToolboxView(state: state)
             case .grounding: FiveSensesView(state: state)
             case .cards: HintsView(state: state)
             }

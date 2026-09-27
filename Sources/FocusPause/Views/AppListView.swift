@@ -113,7 +113,7 @@ struct AppListView: View {
                                         }
                                         .padding(.vertical, 7)
                                         .padding(.horizontal, 8)
-                                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                                        .background(.quaternary, in: RoundedRectangle(cornerRadius: FocusRadius.control))
                                     }
                                     .buttonStyle(.plain)
                                 }

@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 /// 「我的工具箱」页：分组的可编辑外链集合，分组名和链接都可增删改。
-struct BreathingView: View {
+/// 注意：真正的呼吸练习在 PauseView 的新页面实现，本文件只承载工具箱。
+struct ToolboxView: View {
     @ObservedObject var state: AppState
 
     @State private var editing: EditTarget?
@@ -40,9 +41,19 @@ struct BreathingView: View {
                     .padding(.horizontal)
 
                 if state.toolboxGroups.isEmpty {
-                    Text("还没有分组。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: 8) {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("添加第一个分组")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text("把常用的练习入口放进来，支持网页外链和本机应用。")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
                 }
 
                 ForEach(state.toolboxGroups) { group in
@@ -93,7 +104,7 @@ struct BreathingView: View {
             }
 
             if group.links.isEmpty {
-                Text("还没有链接。")
+                Text("分组还是空的，点击下方「新增链接」添加。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

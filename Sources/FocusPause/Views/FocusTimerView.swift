@@ -237,11 +237,40 @@ struct FocusTimerView: View {
                 }
             }
 
-            Text("休息期间不弹提醒，结束后再继续；休息事件会悬浮提醒。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("休息期间不弹提醒，结束后再继续。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !state.actionPrompts.isEmpty {
+                    Button {
+                        state.selectedTab = 2
+                        state.pauseMode = .cards
+                    } label: {
+                        Label("编辑事项", systemImage: "pencil")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
+                    .fixedSize()
+                }
+            }
 
-            if !state.actionPrompts.isEmpty {
+            if state.actionPrompts.isEmpty {
+                HStack {
+                    Text("还没有休息事项")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        state.selectedTab = 2
+                        state.pauseMode = .cards
+                    } label: {
+                        Label("去添加", systemImage: "plus")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
+                }
+            } else {
                 FlowLayout(spacing: 6) {
                     ForEach(state.actionPrompts.prefix(4)) { item in
                         Button {

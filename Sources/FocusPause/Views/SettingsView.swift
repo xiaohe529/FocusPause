@@ -513,7 +513,7 @@ struct SettingsView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(8)
-                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: FocusRadius.control))
                         }
                     }
                     .padding(.top, 8)

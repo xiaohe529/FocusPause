@@ -1,6 +1,24 @@
 import SwiftUI
 
 /// 极简冷静风设计系统：统一色板 + 统一卡片样式。
+///
+/// 色彩语义（Color Consistency Lock）：
+/// - `focusAccent`（靛蓝）：唯一主色。选中态、主按钮、链接、导航。
+/// - `focusActive`（青绿）：仅表示「正在运行」。计时中横幅、呼吸动画、活跃指示。
+/// - `focusDanger`（红）：仅危险操作。紧急退出、删除、破坏性确认。
+/// - 三个颜色不得交叉使用；新 UI 一律从语义出发选色。
+///
+/// 圆角系统（Shape Consistency Lock）：控件 8 / 卡片 12 / 弹窗 14，
+/// 通过 `FocusRadius` 使用，禁止裸写其他数值。
+enum FocusRadius {
+    /// 按钮、输入框、chip、横幅等小控件
+    static let control: CGFloat = 8
+    /// 分组卡片、内容容器
+    static let card: CGFloat = 12
+    /// 弹窗、模态大块
+    static let modal: CGFloat = 14
+}
+
 extension Color {
     /// 沉稳靛蓝：主强调色（开启屏蔽、选中态、主按钮）
     static let focusAccent = Color(red: 0.42, green: 0.47, blue: 0.72)
@@ -14,7 +32,7 @@ extension Color {
 
 extension View {
     /// 统一卡片样式：圆角 10 + 内边距 + 自适应底色。
-    func focusCard(cornerRadius: CGFloat = 10) -> some View {
+    func focusCard(cornerRadius: CGFloat = FocusRadius.card) -> some View {
         self
             .padding(12)
             .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: cornerRadius))
@@ -92,7 +110,7 @@ struct SectionCard<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: FocusRadius.card))
     }
 }
 
@@ -109,7 +127,7 @@ struct DialogHeader: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 36, height: 36)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: FocusRadius.control))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -187,7 +205,7 @@ struct PasswordDialogView: View {
         }
         .padding(22)
         .frame(width: 360, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }
 
@@ -229,7 +247,7 @@ struct ConfirmDialogView: View {
                     }
                 }
                 .padding(10)
-                .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.control))
             }
 
             HStack {
@@ -243,7 +261,7 @@ struct ConfirmDialogView: View {
         }
         .padding(22)
         .frame(width: 380, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }
 
@@ -410,7 +428,7 @@ struct InfoBanner<Content: View>: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(style.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(style.color.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.control))
     }
 }
 

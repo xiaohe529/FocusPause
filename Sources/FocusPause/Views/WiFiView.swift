@@ -104,7 +104,7 @@ struct WiFiView: View {
             .help(state.wifiDisabled ? "恢复网络" : "拦截网络")
         }
         .padding(16)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.card))
     }
 
     private var detailsCard: some View {

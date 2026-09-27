@@ -12,8 +12,6 @@ struct HintsView: View {
     /// 鼠标悬停的提醒条目 id：悬停到该行时才显示其操作按钮。
     @State private var hoveringPromptID: UUID?
 
-    private let cardTints: [Color] = [.focusAccent, .focusActive, .gray]
-
     private struct EditingItem: Identifiable {
         let id = UUID()
         let promptID: UUID?   // nil = 新增
@@ -22,14 +20,15 @@ struct HintsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                sectionHeader("文字提示")
+            VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("给自己一些警醒与提示")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    sectionHeader("文字提示")
                     if state.textPrompts.isEmpty {
-                        emptyText("还没有文字提示。")
+                        emptyState(
+                            "quote.bubble",
+                            "还没有文字提示。",
+                            "写下能让自己停下来的那句话，点击下方新增。"
+                        )
                     } else {
                         FlowLayout(spacing: 8) {
                             ForEach(state.textPrompts) { item in
@@ -41,17 +40,20 @@ struct HintsView: View {
                         beginNew(kind: .text)
                     }
                 }
-                .focusCard()
 
-                Divider().padding(.horizontal, -16)
+                Divider()
 
-                sectionHeader("一些提醒")
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("前 4 条会展示在提醒弹窗（含弹窗休息事件选择），其余仅用于编辑排序。")
+                    sectionHeader("一些提醒")
+                    Text("前 4 条会出现在提醒弹窗里，其余仅用于编辑排序。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if state.actionPrompts.isEmpty {
-                        emptyText("还没有提醒。")
+                        emptyState(
+                            "bell.badge",
+                            "还没有提醒。",
+                            "新增后，前 4 条会出现在提醒弹窗里。"
+                        )
                     }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible())], spacing: 8) {
                         ForEach(state.actionPrompts) { prompt in
@@ -62,7 +64,6 @@ struct HintsView: View {
                         beginNew(kind: .action)
                     }
                 }
-                .focusCard()
             }
             .padding(.top, 8)
             .padding(.bottom, 24)
@@ -85,18 +86,14 @@ struct HintsView: View {
                 .multilineTextAlignment(.leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
-                .background(cardColor(for: item), in: RoundedRectangle(cornerRadius: 10))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .background(cardColor(for: item), in: RoundedRectangle(cornerRadius: FocusRadius.control))
+                .contentShape(RoundedRectangle(cornerRadius: FocusRadius.control))
         }
         .buttonStyle(.plain)
     }
 
     private func cardColor(for item: PromptItem) -> Color {
-        guard let index = state.textPrompts.firstIndex(where: { $0.id == item.id }) else {
-            return Color.focusAccent.opacity(0.12)
-        }
-        let tint = cardTints[index % cardTints.count]
-        return tint.opacity(0.14)
+        Color.focusAccent.opacity(0.10)
     }
 
     // MARK: - 一些提醒行
@@ -125,7 +122,7 @@ struct HintsView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(actionColor(for: prompt), in: RoundedRectangle(cornerRadius: 8))
+        .background(actionColor(for: prompt), in: RoundedRectangle(cornerRadius: FocusRadius.control))
         .onHover { inside in
             hoveringPromptID = inside ? prompt.id : (hoveringPromptID == prompt.id ? nil : hoveringPromptID)
         }
@@ -135,9 +132,9 @@ struct HintsView: View {
         guard let index = state.actionPrompts.firstIndex(where: { $0.id == prompt.id }) else {
             return Color.secondary.opacity(0.06)
         }
-        // 前 4 条是弹窗里会展示的，统一用浅红色背景；其余保持中性。
+        // 前 4 条是弹窗里会展示的，用主色高亮；其余保持中性。
         guard index < 4 else { return Color.secondary.opacity(0.06) }
-        return Color.focusDanger.opacity(0.10)
+        return Color.focusAccent.opacity(0.10)
     }
 
     // MARK: - 编辑 sheet（新增 / 编辑共用）
@@ -202,15 +199,29 @@ struct HintsView: View {
                     .font(.subheadline)
                     .padding(.vertical, 4)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+            .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
             .fixedSize()
             Spacer()
         }
     }
 
     @ViewBuilder
-    private func emptyText(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary)
+    private func emptyState(_ icon: String, _ text: String, _ hint: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(text)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
     }
 
     private func sectionHeader(_ title: String) -> some View {

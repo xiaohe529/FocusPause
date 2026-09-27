@@ -44,17 +44,10 @@ struct AlwaysActiveButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
             .frame(minHeight: 30)
-            .background(
-                LinearGradient(
-                    colors: [color.opacity(configuration.isPressed ? 0.78 : 1.0), color.opacity(configuration.isPressed ? 0.68 : 0.88)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ),
-                in: Capsule()
-            )
+            .background(color.opacity(configuration.isPressed ? 0.78 : 1.0), in: Capsule())
             .foregroundColor(.white)
             .clipShape(Capsule())
-            .shadow(color: color.opacity(configuration.isPressed ? 0.18 : 0.24), radius: configuration.isPressed ? 3 : 6, y: 2)
+            .shadow(color: color.opacity(configuration.isPressed ? 0.12 : 0.18), radius: configuration.isPressed ? 2 : 4, y: 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }

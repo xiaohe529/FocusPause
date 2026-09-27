@@ -63,6 +63,6 @@ struct BreakGlassDialogView: View {
         }
         .padding(22)
         .frame(width: 380, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }

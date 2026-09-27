@@ -14,9 +14,9 @@ private struct DialogFieldChrome: ViewModifier {
             .padding(.horizontal, 7)
             .frame(height: height, alignment: .center)
             .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
                     .strokeBorder(
                         isFocused
                             ? Color(nsColor: .controlAccentColor)
@@ -37,9 +37,9 @@ private struct DialogTextEditorChrome: ViewModifier {
             .padding(.vertical, 5)
             .frame(height: 64, alignment: .topLeading)
             .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
                     .strokeBorder(
                         isFocused
                             ? Color(nsColor: .controlAccentColor)
