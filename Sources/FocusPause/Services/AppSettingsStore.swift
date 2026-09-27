@@ -26,6 +26,7 @@ struct AppSettingsStore {
         case remindFocusTimerAfterEnd
         case remindCountdownManualEnd
         case remindRestManualEnd
+        case restLockScreen
         case breakGlassEnabled
         case didMigrateLegacyDefaults
         case scheduledWindows

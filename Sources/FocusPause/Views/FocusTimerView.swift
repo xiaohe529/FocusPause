@@ -176,12 +176,24 @@ struct FocusTimerView: View {
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
                 .disabled(state.delayedBlockActive || !state.blockingEnabled || state.focusTimerActive)
+            } else if focusMode == .rest {
+                Button {
+                    state.startRest(minutes: state.restMinutes, event: restEvent)
+                    restEvent = ""
+                } label: {
+                    Label("开始休息", systemImage: "cup.and.saucer.fill")
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                .disabled(!state.blockingEnabled || state.focusTimerActive)
             }
 
             if focusMode == .countdown {
                 focusOptionsCard
             } else if focusMode == .elapsed {
                 elapsedOptionsCard
+            } else if focusMode == .rest {
+                restOptionsCard
             }
         }
         .padding()
@@ -229,22 +241,6 @@ struct FocusTimerView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Toggle(isOn: Binding(
-                get: { state.remindRestManualEnd },
-                set: { newValue in
-                    state.setRemindRestManualEnd(newValue)
-                }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("主动结束后提醒")
-                        .font(.subheadline)
-                    Text("手动结束休息后，也弹窗询问开启下一轮")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-
             if !state.actionPrompts.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(state.actionPrompts.prefix(4)) { item in
@@ -281,20 +277,50 @@ struct FocusTimerView: View {
                 height: 22
             )
 
-            HStack {
-                Spacer()
-                Button {
-                    state.startRest(minutes: state.restMinutes, event: restEvent)
-                    restEvent = ""
-                } label: {
-                    Label("开始休息", systemImage: "cup.and.saucer.fill")
-                        .padding(.vertical, 5)
-                }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
-            }
         }
         .padding(12)
         .background(Color.focusAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private var restOptionsCard: some View {
+        SectionCard(title: "休息选项", icon: "switch.2", spacing: 4) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: Binding(
+                    get: { state.restLockScreen },
+                    set: { newValue in
+                        state.setRestLockScreen(newValue)
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("点击休息后锁屏")
+                            .font(.subheadline)
+                        Text("点击开始休息时立即锁定屏幕")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+
+                Divider()
+
+                Toggle(isOn: Binding(
+                    get: { state.remindRestManualEnd },
+                    set: { newValue in
+                        state.setRemindRestManualEnd(newValue)
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("主动结束后提醒")
+                            .font(.subheadline)
+                        Text("手动结束休息后，也弹窗询问开启下一轮")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+        }
     }
 
     @ViewBuilder

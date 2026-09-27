@@ -35,7 +35,7 @@ struct AppListView: View {
                             .font(.body)
                     }
                 }
-                .buttonStyle(AlwaysActiveBorderlessStyle(color: .focusAccent))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
                 .disabled(isLoadingApps)
                 .help("从已安装 App 中选择")
             }

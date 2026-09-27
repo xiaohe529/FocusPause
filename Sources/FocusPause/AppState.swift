@@ -68,6 +68,7 @@ class AppState: ObservableObject {
     @Published var remindFocusTimerAfterEnd = false
     @Published var remindCountdownManualEnd = true
     @Published var remindRestManualEnd = true
+    @Published var restLockScreen = false
     @Published var showCooldownAlert = false
     @Published var remindBlockingNoFocus = false
     @Published var blockingNoFocusIntervalMinutes = 30
@@ -375,6 +376,7 @@ class AppState: ObservableObject {
         remindFocusTimerAfterEnd = settings.bool(.remindFocusTimerAfterEnd, default: false)
         remindCountdownManualEnd = settings.bool(.remindCountdownManualEnd, default: true)
         remindRestManualEnd = settings.bool(.remindRestManualEnd, default: true)
+        restLockScreen = settings.bool(.restLockScreen)
         breakGlassEnabled = settings.bool(.breakGlassEnabled)
 
         loadPrompts()
@@ -694,7 +696,6 @@ class AppState: ObservableObject {
 
     // MARK: - Break-glass emergency unlock
 
-    static let breakGlassConfirmationPhrase = "我确认这是真实的紧急情况"
     static let breakGlassCooldownSeconds: TimeInterval = 5 * 60
 
     private static func currentDayString(for date: Date = Date()) -> String {
@@ -748,7 +749,7 @@ class AppState: ObservableObject {
         return date >= end
     }
 
-    func setBreakGlassEnabled(_ enabled: Bool, password: String, confirmationPhrase: String = "") -> Bool {
+    func setBreakGlassEnabled(_ enabled: Bool) -> Bool {
         if enabled {
             guard canConfigureBreakGlass || canEnableBreakGlassDuringLock else {
                 lastError = "应急解锁当前不可启用"
@@ -760,16 +761,6 @@ class AppState: ObservableObject {
                 return false
             }
         }
-        guard KeychainPassword.verify(password) else {
-            lastError = "密码错误"
-            return false
-        }
-        if enabled {
-            guard confirmationPhrase.trimmingCharacters(in: .whitespacesAndNewlines) == Self.breakGlassConfirmationPhrase else {
-                lastError = "确认语句不一致"
-                return false
-            }
-        }
 
         breakGlassEnabled = enabled
         settings.set(enabled, for: .breakGlassEnabled)
@@ -778,7 +769,7 @@ class AppState: ObservableObject {
     }
 
     @discardableResult
-    func startBreakGlassUnlock(password: String, confirmationPhrase: String) -> Bool {
+    func startBreakGlassUnlock(password: String) -> Bool {
         guard canStartBreakGlassUnlock() else {
             lastError = "应急解锁当前不可用"
             return false
@@ -789,10 +780,6 @@ class AppState: ObservableObject {
         }
         guard KeychainPassword.verify(password) else {
             lastError = "密码错误"
-            return false
-        }
-        guard confirmationPhrase.trimmingCharacters(in: .whitespacesAndNewlines) == Self.breakGlassConfirmationPhrase else {
-            lastError = "确认语句不一致"
             return false
         }
 
@@ -1130,6 +1117,9 @@ class AppState: ObservableObject {
         restTimerEngine.start(endTimestamp: restEnd!)
         refreshGoalOverlay()
         FocusLogger.info("Rest started: \(minutes) min, ends at \(restEnd!)")
+        if restLockScreen {
+            lockScreen()
+        }
     }
 
     func cancelRest() {
@@ -1143,6 +1133,8 @@ class AppState: ObservableObject {
         if remindRestManualEnd {
             presentRestEndReminder()
         }
+        // 休息开始时循环已被停止；结束后必须恢复，否则“已屏蔽未专注”不会再提醒。
+        restartBlockingNoFocusIfNeeded()
     }
 
     func restExpired() {
@@ -1154,6 +1146,8 @@ class AppState: ObservableObject {
         saveFocusTimer()
         refreshGoalOverlay()
         presentRestEndReminder()
+        // 休息开始时循环已被停止；结束后必须恢复，否则“已屏蔽未专注”不会再提醒。
+        restartBlockingNoFocusIfNeeded()
     }
 
     private func presentRestEndReminder() {
@@ -1860,6 +1854,11 @@ class AppState: ObservableObject {
         settings.set(enabled, for: .remindRestManualEnd)
     }
 
+    func setRestLockScreen(_ enabled: Bool) {
+        restLockScreen = enabled
+        settings.set(enabled, for: .restLockScreen)
+    }
+
     func setRemindFocusTimerAfterBlock(_ enabled: Bool) {
         remindFocusTimerAfterBlock = enabled
         settings.set(enabled, for: .remindFocusTimerAfterBlock)
@@ -2007,6 +2006,7 @@ class AppState: ObservableObject {
                 // 只在「屏蔽中且无专注计时」时计时，其他状态短睡跳过
                 guard self.remindBlockingNoFocus,
                       self.blockingEnabled,
+                      !self.restActive,
                       !self.focusTimerActive,
                       !self.delayedBlockActive,
                       !self.delayedBlockPendingAuth,
@@ -2019,6 +2019,7 @@ class AppState: ObservableObject {
                 if Task.isCancelled { return }
                 guard self.remindBlockingNoFocus,
                       self.blockingEnabled,
+                      !self.restActive,
                       !self.focusTimerActive,
                       !self.delayedBlockActive,
                       !self.isFocusEndNagging else { continue }
@@ -2283,6 +2284,7 @@ class AppState: ObservableObject {
             restTitle: "休息一下",
             restPlaceholder: "休息时想做什么？",
             restDefaultMinutes: 6,
+            restBeforeFocus: true,
             showHints: false,
             showTextHint: true
         ))

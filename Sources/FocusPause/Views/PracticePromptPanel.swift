@@ -88,6 +88,8 @@ struct PromptPanelConfig {
     var restDefaultMinutes = 6
     /// 休息事件候选；为空时回退到 actionItems。
     var restOptions: [String] = []
+    /// 专注结束弹窗把「休息一下」放到继续专注选项上方，减少结束后的操作顺序负担。
+    var restBeforeFocus = false
     /// 专注类弹窗有「休息一下」作为替代动作时，可以隐藏通用的「一些提醒」版块；底部随机文字仍可保留。
     var showHints = true
     var showTextHint = true
@@ -125,15 +127,28 @@ struct PracticePromptPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            section1
-            if config.durationConfirmTitle != nil {
-                primaryActionSection
+            if config.restBeforeFocus {
+                if config.showRest {
+                    restSection
+                }
+                section1
+                if config.durationConfirmTitle != nil {
+                    primaryActionSection
+                }
+            } else {
+                section1
+                if config.durationConfirmTitle != nil {
+                    primaryActionSection
+                }
+                if config.showHints && !config.actionItems.isEmpty {
+                    hintsSection
+                }
+                if config.showRest {
+                    restSection
+                }
             }
-            if config.showHints && !config.actionItems.isEmpty {
+            if config.restBeforeFocus && config.showHints && !config.actionItems.isEmpty {
                 hintsSection
-            }
-            if config.showRest {
-                restSection
             }
             if config.showPause {
                 pauseSection
@@ -204,8 +219,8 @@ struct PracticePromptPanel: View {
                                     Text(preset.0)
                                         .frame(maxWidth: .infinity, minHeight: 28)
                                 }
-                                .buttonStyle(AlwaysActiveButtonStyle(
-                                    color: selectedPreset == preset.1 ? .focusActive : .gray
+                                .buttonStyle(AlwaysActiveSelectableButtonStyle(
+                                    isSelected: selectedPreset == preset.1
                                 ))
                             }
                         }
@@ -261,7 +276,7 @@ struct PracticePromptPanel: View {
                                 .font(.subheadline)
                                 .frame(minWidth: 118, minHeight: 26)
                         }
-                        .buttonStyle(AlwaysActiveButtonStyle(color: .orange))
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                         .help(durationConfirmTitle)
                     }
                 }
@@ -407,7 +422,7 @@ struct PracticePromptPanel: View {
                     Label("休息一下", systemImage: "cup.and.saucer.fill")
                         .frame(minWidth: 76, minHeight: 26)
                 }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
             }
         }
         .padding(10)
@@ -429,7 +444,7 @@ struct PracticePromptPanel: View {
                     Label("暂停一下", systemImage: "pause.circle.fill")
                         .frame(minWidth: 118, minHeight: 28)
                 }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusActive))
 
                 Button {
                     result.goal = goal
@@ -440,7 +455,7 @@ struct PracticePromptPanel: View {
                         .font(.caption)
                         .frame(minWidth: 72, minHeight: 24)
                 }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
             }
             .frame(maxWidth: .infinity, alignment: .center)
 

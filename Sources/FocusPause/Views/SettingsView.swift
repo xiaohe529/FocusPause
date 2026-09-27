@@ -86,15 +86,11 @@ struct SettingsView: View {
                 icon: "lock.open.rotation",
                 message: state.breakGlassEnabled
                     ? "关闭后，紧急退出次数用完时将没有备用解锁方式。"
-                    : "仅用于紧急退出次数用完后的真实紧急情况。启用后仍需输入密码和确认语句，并等待 5 分钟冷静期。",
-                showConfirmationPhrase: !state.breakGlassEnabled,
+                    : "仅用于紧急退出次数用完后的真实紧急情况。发起解锁时仍需输入密码，并等待 5 分钟冷静期。",
+                requiresPassword: false,
                 submitTitle: state.breakGlassEnabled ? "确认关闭" : "确认启用"
-            ) { password, phrase in
-                state.setBreakGlassEnabled(
-                    !state.breakGlassEnabled,
-                    password: password,
-                    confirmationPhrase: phrase
-                )
+            ) { _ in
+                state.setBreakGlassEnabled(!state.breakGlassEnabled)
             }
         }
         .sheet(isPresented: $showBreakGlassUnlock, onDismiss: {
@@ -104,10 +100,10 @@ struct SettingsView: View {
                 title: "发起应急解锁",
                 icon: "lock.open.rotation",
                 message: "通过验证后进入 5 分钟冷静期；结束后会解除所有屏蔽。",
-                showConfirmationPhrase: true,
+                requiresPassword: true,
                 submitTitle: "进入冷静期"
-            ) { password, phrase in
-                state.startBreakGlassUnlock(password: password, confirmationPhrase: phrase)
+            ) { password in
+                state.startBreakGlassUnlock(password: password)
             }
         }
         .onAppear {

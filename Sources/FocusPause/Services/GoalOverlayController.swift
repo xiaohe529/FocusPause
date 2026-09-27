@@ -1,15 +1,40 @@
 import AppKit
 import SwiftUI
 
-/// A small always-on-top panel that floats the current focus goal above other
-/// apps during a delayed-block countdown. Non-activating and draggable so it
-/// never steals focus from what the user is working on.
+/// 原生窗口拖拽比在 SwiftUI `onChanged` 里逐帧 `setFrameOrigin` 更顺滑。
+/// 右侧一小块保留给关闭按钮，其余区域直接交给系统拖拽会话。
+private final class GoalOverlayPanel: NSPanel {
+    private let closeButtonZone: CGFloat = 44
+
+    override func sendEvent(_ event: NSEvent) {
+        guard event.type == .leftMouseDown,
+              let contentView,
+              contentView.frame.contains(event.locationInWindow) else {
+            super.sendEvent(event)
+            return
+        }
+
+        let closeButtonRect = NSRect(
+            x: contentView.bounds.maxX - closeButtonZone,
+            y: contentView.bounds.midY - closeButtonZone / 2,
+            width: closeButtonZone,
+            height: closeButtonZone
+        )
+
+        if closeButtonRect.contains(event.locationInWindow) {
+            super.sendEvent(event)
+        } else {
+            performDrag(with: event)
+        }
+    }
+}
+
 @MainActor
 final class GoalOverlayController: NSWindowController {
     private var hostingController: NSHostingController<GoalOverlayView>?
 
     init() {
-        let panel = NSPanel(
+        let panel = GoalOverlayPanel(
             contentRect: NSRect(x: 0, y: 0, width: 340, height: 96),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -17,7 +42,6 @@ final class GoalOverlayController: NSWindowController {
         )
         panel.level = .floating
         panel.isFloatingPanel = true
-        panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         // 全局置顶：跨所有空间、可显示在其它 App 之上；不能用 .stationary（会把它钉在当前空间）。
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -36,7 +60,13 @@ final class GoalOverlayController: NSWindowController {
     /// `goal` 为 nil 时不显示事件；`end` 非 nil 时显示实时倒计时。
     func show(title: String, goal: String?, end: Date?, elapsedStart: Date? = nil, onClose: (() -> Void)? = nil) {
         FocusLogger.info("GoalOverlay show — title=\(title) window=\(window != nil)")
-        let vc = NSHostingController(rootView: GoalOverlayView(title: title, goal: goal, end: end, elapsedStart: elapsedStart, onClose: onClose))
+        let vc = NSHostingController(rootView: GoalOverlayView(
+            title: title,
+            goal: goal,
+            end: end,
+            elapsedStart: elapsedStart,
+            onClose: onClose
+        ))
         contentViewController = vc
         hostingController = vc
 

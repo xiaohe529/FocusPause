@@ -5,12 +5,11 @@ struct BreakGlassDialogView: View {
     var icon: String = "lock.open.rotation"
     var tint: Color = .focusDanger
     var message: String
-    var showConfirmationPhrase: Bool
+    var requiresPassword: Bool
     var submitTitle: String
-    let onSubmit: (_ password: String, _ confirmationPhrase: String) -> Bool
+    let onSubmit: (_ password: String) -> Bool
 
     @State private var password = ""
-    @State private var confirmationPhrase = ""
     @State private var error = false
     @Environment(\.dismiss) private var dismiss
 
@@ -27,37 +26,22 @@ struct BreakGlassDialogView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("屏蔽密码")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                DialogSecureField(
-                    text: $password,
-                    placeholder: "输入密码",
-                    autoFocus: true
-                )
-            }
-
-            if showConfirmationPhrase {
+            if requiresPassword {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("确认语句")
+                    Text("屏蔽密码")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    DialogTextField(
-                        text: $confirmationPhrase,
-                        placeholder: AppState.breakGlassConfirmationPhrase,
-                        height: 24
+                    DialogSecureField(
+                        text: $password,
+                        placeholder: "输入密码",
+                        autoFocus: true
                     )
-                    Text("请完整输入：\(AppState.breakGlassConfirmationPhrase)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             if error {
                 InfoBanner(style: .danger) {
-                    Text("验证未通过，请检查密码和确认语句。")
+                    Text("密码错误，请重新输入。")
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -67,7 +51,7 @@ struct BreakGlassDialogView: View {
                 Button("取消") { dismiss() }
                     .buttonStyle(.bordered)
                 Button(submitTitle) {
-                    if onSubmit(password, confirmationPhrase) {
+                    if onSubmit(password) {
                         dismiss()
                     } else {
                         error = true
