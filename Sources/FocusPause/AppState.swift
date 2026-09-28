@@ -696,6 +696,7 @@ class AppState: ObservableObject {
 
     // MARK: - Break-glass emergency unlock
 
+    static let breakGlassConfirmationPhrase = "我确认这是真实的紧急情况"
     static let breakGlassCooldownSeconds: TimeInterval = 5 * 60
 
     private static func currentDayString(for date: Date = Date()) -> String {
@@ -769,13 +770,17 @@ class AppState: ObservableObject {
     }
 
     @discardableResult
-    func startBreakGlassUnlock(password: String) -> Bool {
+    func startBreakGlassUnlock(password: String, confirmationPhrase: String) -> Bool {
         guard canStartBreakGlassUnlock() else {
             lastError = "应急解锁当前不可用"
             return false
         }
         guard helperInstalled, !helperNeedsRepair else {
             lastError = "后台助手不可用，请先修复后再试"
+            return false
+        }
+        guard confirmationPhrase.trimmingCharacters(in: .whitespacesAndNewlines) == Self.breakGlassConfirmationPhrase else {
+            lastError = "确认语句不一致"
             return false
         }
         guard KeychainPassword.verify(password) else {
@@ -789,6 +794,20 @@ class AppState: ObservableObject {
         saveFocusTimer()
         refreshGoalOverlay()
         FocusLogger.info("Break-glass cooldown started, ends at \(breakGlassCooldownEnd!)")
+        return true
+    }
+
+    /// Keeps all blocking rules active and only abandons the pending unlock.
+    @discardableResult
+    func cancelBreakGlassUnlock() -> Bool {
+        guard isBreakGlassInCooldown() else {
+            lastError = "当前没有进行中的应急解锁"
+            return false
+        }
+
+        breakGlassCooldownEnd = nil
+        saveFocusTimer()
+        FocusLogger.info("Break-glass unlock abandoned; blocking remains active")
         return true
     }
 

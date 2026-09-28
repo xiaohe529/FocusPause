@@ -75,17 +75,9 @@ class StatusBarManager: NSObject {
         toggleItem.isEnabled = state?.isProcessing != true
         menu.addItem(toggleItem)
 
-        let settingsItem = NSMenuItem(
-            title: "设置",
-            action: #selector(openSettings),
-            keyEquivalent: ","
-        )
-        settingsItem.target = self
-        menu.addItem(settingsItem)
-
         menu.addItem(.separator())
         let quitItem = NSMenuItem(
-            title: "退出 Focus&Pause",
+            title: "退出",
             action: #selector(quitClicked),
             keyEquivalent: "q"
         )
@@ -96,11 +88,6 @@ class StatusBarManager: NSObject {
 
     @objc private func toggleBlockingClicked() {
         state?.toggleBlocking()
-        updateIcon()
-    }
-
-    @objc private func openSettings() {
-        settings?.show()
         updateIcon()
     }
 

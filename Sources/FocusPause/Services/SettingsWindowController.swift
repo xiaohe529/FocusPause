@@ -40,6 +40,8 @@ class SettingsWindowController: NSWindowController {
             window?.deminiaturize(nil)
         }
         window?.makeKeyAndOrderFront(nil)
+        // Make sure accessory-app windows are raised even if another app is active.
+        window?.orderFrontRegardless()
         // Don't auto-focus the first text field (e.g. the domain input on the website tab)
         // when the window opens. Defer to the next runloop so SwiftUI has laid out first.
         DispatchQueue.main.async { [weak self] in

@@ -17,6 +17,8 @@ enum FocusRadius {
     static let card: CGFloat = 12
     /// 弹窗、模态大块
     static let modal: CGFloat = 14
+    /// 主导航 Tab 选中态，比卡片更紧凑但比控件更结构化
+    static let primarySegment: CGFloat = 10
 }
 
 extension Color {
@@ -569,21 +571,21 @@ struct SubSegmentCard<T: Hashable>: View {
                             .font(.subheadline)
                     }
                     .foregroundStyle(selection == option.value ? Color.focusAccent : Color.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, 18)
                     .padding(.vertical, 8)
                     .background(
                         selection == option.value ? Color.focusAccent.opacity(0.14) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 8)
+                        in: Capsule()
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        Capsule()
                             .stroke(
                                 selection == option.value ? Color.focusAccent.opacity(0.45) : Color.clear,
                                 lineWidth: 1
                             )
                     )
-                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Capsule())
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.plain)
             }

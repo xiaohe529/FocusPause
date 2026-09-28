@@ -31,6 +31,7 @@ struct SettingsView: View {
     @State private var showBreakGlassSetup = false
     @State private var breakGlassSetupDisabling = false
     @State private var showBreakGlassUnlock = false
+    @State private var showBreakGlassCancel = false
     @State private var recoveryInput1 = ""
     @State private var recoveryInput2 = ""
     @State private var revealedPassword: String?
@@ -89,8 +90,9 @@ struct SettingsView: View {
                     : "仅用于紧急退出次数用完后的真实紧急情况。发起解锁时仍需输入密码，并等待 5 分钟冷静期。",
                 requiresPassword: false,
                 submitTitle: state.breakGlassEnabled ? "确认关闭" : "确认启用"
-            ) { _ in
-                state.setBreakGlassEnabled(!state.breakGlassEnabled)
+            ) { _, _ in
+                let succeeded = state.setBreakGlassEnabled(!state.breakGlassEnabled)
+                return succeeded ? nil : (state.lastError ?? "无法更改应急解锁设置")
             }
         }
         .sheet(isPresented: $showBreakGlassUnlock, onDismiss: {
@@ -99,11 +101,27 @@ struct SettingsView: View {
             BreakGlassDialogView(
                 title: "发起应急解锁",
                 icon: "lock.open.rotation",
-                message: "通过验证后进入 5 分钟冷静期；结束后会解除所有屏蔽。",
+                message: "输入确认语句和密码后进入 5 分钟冷静期；冷静期内可放弃，结束前不会解除屏蔽。",
                 requiresPassword: true,
+                requiresConfirmationPhrase: true,
                 submitTitle: "进入冷静期"
-            ) { password in
-                state.startBreakGlassUnlock(password: password)
+            ) { password, phrase in
+                let succeeded = state.startBreakGlassUnlock(password: password, confirmationPhrase: phrase)
+                return succeeded ? nil : (state.lastError ?? "验证未通过，请重新输入。")
+            }
+        }
+        .sheet(isPresented: $showBreakGlassCancel) {
+            ConfirmDialogView(
+                title: "放弃应急解锁",
+                icon: "xmark.circle",
+                tint: .focusAccent,
+                message: "将结束当前冷静期并保持所有屏蔽开启，不会解除任何规则。",
+                confirmTitle: "放弃解锁",
+                confirmTint: .focusAccent
+            ) {
+                state.cancelBreakGlassUnlock()
+            } onCancel: {
+                showBreakGlassCancel = false
             }
         }
         .onAppear {
@@ -621,12 +639,20 @@ struct SettingsView: View {
                             Text("冷静期剩余 \(remaining / 60):\(String(format: "%02d", remaining % 60))")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                            Button {
+                                showBreakGlassCancel = true
+                            } label: {
+                                Label("放弃解锁，保持屏蔽", systemImage: "xmark.circle")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
                     }
                 }
             }
 
-            Text("最后的备用解锁方式：仅用于紧急退出次数用完后的真实紧急情况。需输入密码和确认语句，等待 5 分钟后解除所有屏蔽；每天最多发起 1 次。屏蔽进行中也可以从这里启用。")
+            Text("最后的备用解锁方式：满足条件后点击“应急解锁”，输入确认语句和密码进入 5 分钟冷静期；冷静期内可放弃并保持屏蔽，结束后才确认解除所有屏蔽。每天最多发起 1 次。屏蔽进行中也可以从这里启用。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -28,9 +28,9 @@ struct MainView: View {
                             .foregroundStyle(state.selectedTab == i ? .white : .secondary)
                             .background(
                                 state.selectedTab == i ? Color.focusAccent : Color.clear,
-                                in: Capsule()
+                                in: RoundedRectangle(cornerRadius: FocusRadius.primarySegment)
                             )
-                            .contentShape(Capsule())
+                            .contentShape(RoundedRectangle(cornerRadius: FocusRadius.primarySegment))
                     }
                     .buttonStyle(.plain)
                 }

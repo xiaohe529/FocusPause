@@ -5,12 +5,14 @@ struct BreakGlassDialogView: View {
     var icon: String = "lock.open.rotation"
     var tint: Color = .focusDanger
     var message: String
-    var requiresPassword: Bool
+    var requiresPassword: Bool = false
+    var requiresConfirmationPhrase: Bool = false
     var submitTitle: String
-    let onSubmit: (_ password: String) -> Bool
+    let onSubmit: (_ password: String, _ confirmationPhrase: String) -> String?
 
     @State private var password = ""
-    @State private var error = false
+    @State private var confirmationPhrase = ""
+    @State private var errorMessage = ""
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -26,6 +28,22 @@ struct BreakGlassDialogView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if requiresConfirmationPhrase {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("确认语句")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    DialogTextField(
+                        text: $confirmationPhrase,
+                        placeholder: AppState.breakGlassConfirmationPhrase,
+                        height: 24
+                    )
+                    Text("请完整输入：\(AppState.breakGlassConfirmationPhrase)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if requiresPassword {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("屏蔽密码")
@@ -39,9 +57,9 @@ struct BreakGlassDialogView: View {
                 }
             }
 
-            if error {
+            if !errorMessage.isEmpty {
                 InfoBanner(style: .danger) {
-                    Text("密码错误，请重新输入。")
+                    Text(errorMessage)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -51,10 +69,10 @@ struct BreakGlassDialogView: View {
                 Button("取消") { dismiss() }
                     .buttonStyle(.bordered)
                 Button(submitTitle) {
-                    if onSubmit(password) {
-                        dismiss()
+                    if let failureMessage = onSubmit(password, confirmationPhrase) {
+                        errorMessage = failureMessage
                     } else {
-                        error = true
+                        dismiss()
                     }
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: tint))
