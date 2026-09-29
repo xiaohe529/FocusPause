@@ -1175,8 +1175,16 @@ class AppState: ObservableObject {
         restGoal = nil
         saveFocusTimer()
         refreshGoalOverlay()
+
+        // 本函数由 SwiftUI 按钮手势回调同步调用（FocusTimerView 的「结束休息」）。
+        // 若在同一个手势栈里直接 NSApp.runModal，嵌套模态事件循环会立刻接管 runloop，
+        // 按钮手势收不到完整事件序列（mouse-up → gesture 结束 → action 派发），
+        // action 闭包永远不执行——表现为「弹窗出现了但点了没反应」。
+        // 推迟到下一个 runloop turn，等手势栈完全退出后再启动模态循环。
         if remindRestManualEnd {
-            presentRestEndReminder()
+            DispatchQueue.main.async { [weak self] in
+                self?.presentRestEndReminder()
+            }
         }
         // 休息开始时循环已被停止；结束后必须恢复，否则“已屏蔽未专注”不会再提醒。
         restartBlockingNoFocusIfNeeded()
