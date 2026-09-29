@@ -17,3 +17,4 @@ DerivedData/
 
 # root-level dev/debug artifacts
 /_*
+*.sha256

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 struct GiteeRelease: Decodable {
@@ -77,17 +78,71 @@ enum Updater {
     }
 
     /// Downloads the release asset to the user's Downloads folder and reveals it
-    /// in Finder. Returns an error message on failure, or nil on success.
+    /// in Finder. When a matching `.sha256` asset exists next to the download it is
+    /// fetched too and the archive's digest is verified before the file is kept.
+    /// Returns an error message on failure, or nil on success.
     static func downloadAndOpen(_ url: URL) async -> String? {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
             .appendingPathComponent(url.lastPathComponent)
         do {
             try await download(url, to: downloads)
+            if let problem = await verifyChecksum(for: downloads) {
+                try? FileManager.default.removeItem(at: downloads)
+                return problem
+            }
             NSWorkspace.shared.open(downloads)
             return nil
         } catch {
             return "下载失败：\(error.localizedDescription)"
         }
+    }
+
+    /// Fetches `<asset>.sha256` from the same release and compares it against the
+    /// downloaded file. Returns nil when the file matches or when no checksum
+    /// asset is published (older releases predate this).
+    private static func verifyChecksum(for file: URL) async -> String? {
+        guard let remote = remoteChecksumURL(for: file) else { return nil }
+        guard let fetched = try? await URLSession.shared.data(from: remote) else { return nil }
+        let (data, response) = fetched
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let text = String(data: data, encoding: .utf8)
+        else { return nil }
+        let expected = Self.extractDigest(from: text)
+        guard let expected else { return nil }
+        let actual = sha256Hex(of: file)
+        guard actual.lowercased() == expected.lowercased() else {
+            return "安装包校验失败，可能在下载中损坏，请重试。"
+        }
+        return nil
+    }
+
+    /// Pulls the 64-hex-character digest out of a `sha256sum`-style text body.
+    private static func extractDigest(from text: String) -> String? {
+        for line in text.split(separator: "\n") {
+            let token = line.split(separator: " ").first.map(String.init) ?? ""
+            if token.count == 64 && token.allSatisfy(\.isHexDigit) { return token }
+        }
+        return nil
+    }
+
+    /// Derives the release-hosted `.sha256` URL from a local download path by
+    /// pointing back at the Gitee release download endpoint.
+    private static func remoteChecksumURL(for file: URL) -> URL? {
+        guard let tag = releaseTagFromAssetName(file.lastPathComponent) else { return nil }
+        return URL(string: "\(releasePageURL)/download/\(tag)/\(file.lastPathComponent).sha256")
+    }
+
+    /// `FocusPause-v1.0.7.dmg` -> `v1.0.7`
+    private static func releaseTagFromAssetName(_ name: String) -> String? {
+        let parts = name.split(separator: "-", omittingEmptySubsequences: false)
+        guard let last = parts.last else { return nil }
+        let stem = last.split(separator: ".").first.map(String.init) ?? ""
+        return stem.hasPrefix("v") ? stem : nil
+    }
+
+    private static func sha256Hex(of file: URL) -> String {
+        guard let data = try? Data(contentsOf: file) else { return "" }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     static func compareVersions(_ a: String, _ b: String) -> ComparisonResult {

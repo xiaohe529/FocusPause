@@ -735,14 +735,16 @@ struct SettingsView: View {
     private func downloadAndOpen(_ url: URL) async {
         isDownloading = true
         defer { isDownloading = false }
-        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(url.lastPathComponent)
-        do {
-            try await Updater.download(url, to: downloads)
-            NSWorkspace.shared.open(downloads)
-        } catch {
-            updateStatus = .failed("下载失败：\(error.localizedDescription)")
+        if let problem = await Updater.downloadAndOpen(url) {
+            updateStatus = .failed(problem)
+            return
         }
+        // 拖拽覆盖前必须先退出正在运行的旧版，否则 /Applications 里的替换会失败。
+        let alert = NSAlert()
+        alert.messageText = "安装包已下载"
+        alert.informativeText = "请先退出当前运行的 FocusPause，再把 FocusPause 拖入「应用程序」完成覆盖安装。"
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     // MARK: - 密码修改 sheet
