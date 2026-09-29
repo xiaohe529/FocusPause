@@ -86,7 +86,7 @@ struct SettingsView: View {
                 title: state.breakGlassEnabled ? "关闭应急解锁" : "启用应急解锁",
                 icon: "lock.open.rotation",
                 message: state.breakGlassEnabled
-                    ? "关闭后，紧急退出次数用完时将没有备用解锁方式。"
+                    ? "关闭后，紧急退出次数用完时将没有备用解锁方式。当前屏蔽和计时不会改变。"
                     : "仅用于紧急退出次数用完后的真实紧急情况。发起解锁时仍需输入密码，并等待 5 分钟冷静期。",
                 requiresPassword: false,
                 submitTitle: state.breakGlassEnabled ? "确认关闭" : "确认启用"
@@ -606,7 +606,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .disabled(state.breakGlassEnabled ? !state.canConfigureBreakGlass : !(state.canConfigureBreakGlass || state.canEnableBreakGlassDuringLock))
+                .disabled(state.breakGlassEnabled ? !state.canCloseBreakGlass : !(state.canConfigureBreakGlass || state.canEnableBreakGlassDuringLock))
             }
 
             if let day = state.breakGlassLastAttemptDay {

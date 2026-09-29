@@ -25,6 +25,7 @@ class AppState: ObservableObject {
         set { settings.set(newValue, for: .ignoredUpdateVersion) }
     }
     @Published var showPasswordSheet = false
+    @Published var showEndElapsedConfirmation = false
     @Published var pendingToggleAction: (() -> Void)?
     @Published var pendingActionLabel: String = ""
     @Published var lastError: String?
@@ -42,6 +43,8 @@ class AppState: ObservableObject {
     @Published var restGoal: String? = nil
     @Published var emergencyUsesThisMonth = 0
     @Published var showEmergencyOverrideSheet = false
+    @Published var showEmergencyQuotaAlert = false
+    @Published var emergencyQuotaAlertMessage = ""
     @Published var delayedBlockActive = false
     @Published var delayedBlockEnd: Date? = nil
     @Published var delayedBlockPendingAuth = false
@@ -601,15 +604,13 @@ class AppState: ObservableObject {
         FocusLogger.info("Started elapsed focus timer")
     }
 
-    /// 请求结束正计时：设好密码 sheet 待验证（无额度）。
+    /// 请求结束正计时：只需普通确认，不消耗紧急退出额度。
     func requestEndElapsedFocus() {
         guard isElapsedFocus else { return }
-        pendingActionLabel = "结束正计时"
-        pendingToggleAction = { [weak self] in self?.endFocusTimerElapsed() }
-        showPasswordSheet = true
+        showEndElapsedConfirmation = true
     }
 
-    /// 结束「正计时」（密码已在 sheet 验证）：只清计时、不扣紧急退出额度。
+    /// 结束「正计时」（已通过确认弹窗）：只清计时、不扣紧急退出额度。
     func endFocusTimerElapsed() {
         guard isElapsedFocus else { return }
         focusTimerActive = false
@@ -635,6 +636,26 @@ class AppState: ObservableObject {
         saveFocusTimer()
         refreshGoalOverlay()
         startFocusEndReminderLoop()
+    }
+
+    /// Opens the password sheet only if quota remains; otherwise explains the state.
+    func requestEmergencyOverride() {
+        guard emergencyUsesThisMonth < emergencyQuota else {
+            emergencyQuotaAlertMessage = "本月专注紧急退出次数已用完。请等待计时自然结束；如确属紧急，可先检查应急解锁是否可用。"
+            showEmergencyQuotaAlert = true
+            return
+        }
+        showEmergencyOverrideSheet = true
+    }
+
+    /// Opens the password sheet only if quota remains; otherwise explains the state.
+    func requestScheduledExit() {
+        guard scheduledExitUsesThisMonth < scheduledExitQuota else {
+            emergencyQuotaAlertMessage = "本月定时屏蔽紧急退出次数已用完。请等待时间段结束；如确属紧急，可先检查应急解锁是否可用。"
+            showEmergencyQuotaAlert = true
+            return
+        }
+        showScheduledExitSheet = true
     }
 
     /// Returns true on success (timer cleared). Returns false on wrong password
@@ -733,6 +754,11 @@ class AppState: ObservableObject {
         breakGlassLastAttemptDay != Self.currentDayString()
     }
 
+    /// Closing the feature is safe: it does not change any active lock.
+    var canCloseBreakGlass: Bool {
+        breakGlassEnabled && breakGlassCooldownEnd == nil
+    }
+
     func canStartBreakGlassUnlock(at date: Date = Date()) -> Bool {
         breakGlassEnabled &&
         breakGlassHardLockQuotaExhausted &&
@@ -757,8 +783,8 @@ class AppState: ObservableObject {
                 return false
             }
         } else {
-            guard canConfigureBreakGlass else {
-                lastError = "存在屏蔽或冷静期时，不能关闭应急解锁"
+            guard canConfigureBreakGlass || canCloseBreakGlass else {
+                lastError = "冷静期内请先放弃解锁，再关闭应急解锁"
                 return false
             }
         }
@@ -1343,6 +1369,23 @@ class AppState: ObservableObject {
             FocusLogger.error("lockScreen: failed to launch ScreenSaverEngine — \(error.localizedDescription)")
             lastError = "锁屏失败：无法启动 ScreenSaverEngine（\(error.localizedDescription)）"
         }
+    }
+
+    /// Cancelling a delayed block is a deliberate escape from the future block,
+    /// so route it through the same password sheet used for other destructive actions.
+    func requestCancelDelayedBlock() {
+        guard delayedBlockActive else { return }
+        guard hasPassword else {
+            lastError = "请先设置屏蔽密码，再取消延时计时"
+            showSettingsSheet = true
+            return
+        }
+
+        pendingActionLabel = "取消延时计时"
+        pendingToggleAction = { [weak self] in
+            self?.cancelDelayedBlock()
+        }
+        showPasswordSheet = true
     }
 
     func cancelDelayedBlock() {
