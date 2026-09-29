@@ -12,7 +12,7 @@ class StatusBarManager: NSObject {
         self.settings = settings
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Focus&Pause")
+        item.button?.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "FocusPause")
         item.button?.image?.isTemplate = true
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
@@ -101,7 +101,7 @@ class StatusBarManager: NSObject {
         let name = (state?.blockingEnabled == true || state?.isProcessing == true)
             ? "pause.circle.fill"
             : "pause.circle"
-        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "Focus&Pause")
+        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "FocusPause")
         statusItem?.button?.image?.isTemplate = true
     }
 }

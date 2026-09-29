@@ -105,16 +105,13 @@ class AppState: ObservableObject {
     var onOpenMainWindow: (() -> Void)?
 
     private var reminderTask: Task<Void, Never>?
-    private var reminderAlertInFlight = false
     private var cooldownTask: Task<Void, Never>?
     private var focusEndReminderTask: Task<Void, Never>?
-    private var focusEndReminderInFlight = false
     /// 专注计时结束的「稍后提醒」循环进行中时为 true，让「已屏蔽但未专注」循环让位，避免两个提醒同时弹。
     private var isFocusEndNagging = false
     /// 定时屏蔽的起止调度任务：start 前等待、到点开启。
     private var scheduledBlockTask: Task<Void, Never>?
     private var blockingNoFocusTask: Task<Void, Never>?
-    private var blockingNoFocusInFlight = false
     /// 「稍后提醒」的一次性 nudge：无论对应提醒开关是否开启，都会在间隔后弹一次。
     private var reminderNudgeTask: Task<Void, Never>?
     private var blockingNoFocusNudgeTask: Task<Void, Never>?
@@ -904,9 +901,22 @@ class AppState: ObservableObject {
         FocusLogger.info("Break-glass unlock completed")
     }
 
+    /// 持久化用的 (kind, endTimestamp)。两者必须成对取自同一个来源：
+    /// `.scheduledBlock` 由 scheduledWindows 独立恢复，不占用 endTimestamp，
+    /// 写作 nil 以免写出一个「有 kind 没结束时间」的半截状态。
+    var persistedTimerKindAndEnd: (kind: FocusTimerState.Kind?, end: Date?) {
+        switch activeTimerKind {
+        case .focus: (.focus, focusTimerEnd)
+        case .delayedBlock: (.delayedBlock, delayedBlockEnd)
+        case .scheduledBlock: (.scheduledBlock, nil)
+        case .none: (nil, nil)
+        }
+    }
+
     private func saveFocusTimer() {
-        let storage = FocusTimerState(kind: activeTimerKind,
-                                      endTimestamp: activeTimerKind != nil ? (focusTimerActive ? focusTimerEnd : delayedBlockEnd) : nil,
+        let snapshot = persistedTimerKindAndEnd
+        let storage = FocusTimerState(kind: snapshot.kind,
+                                      endTimestamp: snapshot.end,
                                       emergencyUsesThisMonth: emergencyUsesThisMonth,
                                       lastResetMonth: lastResetMonth,
                                       delayedBlockPendingAuth: delayedBlockPendingAuth,
@@ -1631,19 +1641,7 @@ class AppState: ObservableObject {
                 isInstallingHelper = true
                 let ok = await HelperInstaller.install()
                 if ok {
-                    for i in 0..<3 {
-                        try? await Task.sleep(for: .seconds(1))
-                        let running = await HelperConnection.shared.forceProbe()
-                        helperInstalled = running
-                        helperNeedsRepair = running && !HelperInstaller.tokenPermissionsAreSecure()
-                        if running && !helperNeedsRepair { break }
-                        FocusLogger.info("Helper probe retry \(i+1)/3 failed")
-                    }
-                    if !helperInstalled || helperNeedsRepair {
-                        FocusLogger.info("Helper installed but probe/permission check failed after retries")
-                        helperInstallAttempted = false
-                        lastError = "后台助手安装后仍需修复，请稍后重试。"
-                    }
+                    await probeHelperAfterInstall()
                 } else {
                     FocusLogger.info("Helper install failed — falling back to per-op osascript")
                     helperInstallAttempted = false
@@ -1796,6 +1794,22 @@ class AppState: ObservableObject {
         }
     }
 
+    /// 安装/重启 helper 后 LaunchDaemon 需要一点时间才起来，最多重试 3 次。
+    /// 成功即返回；始终不健康则更新 helperInstalled/helperNeedsRepair 并置 lastError。
+    private func probeHelperAfterInstall() async {
+        for i in 0..<3 {
+            try? await Task.sleep(for: .seconds(1))
+            let running = await HelperConnection.shared.forceProbe()
+            helperInstalled = running
+            helperNeedsRepair = running && !HelperInstaller.tokenPermissionsAreSecure()
+            if running && !helperNeedsRepair { return }
+            FocusLogger.info("Helper probe retry \(i+1)/3 failed")
+        }
+        FocusLogger.info("Helper installed but probe/permission check failed after retries")
+        helperInstallAttempted = false
+        lastError = "后台助手安装后仍需修复，请稍后重试。"
+    }
+
     func installHelper() async {
         guard !isInstallingHelper else { return }
         guard !helperInstalled || helperNeedsRepair else { return }
@@ -1803,19 +1817,7 @@ class AppState: ObservableObject {
         isInstallingHelper = true
         let ok = await HelperInstaller.install()
         if ok {
-            for i in 0..<3 {
-                try? await Task.sleep(for: .seconds(1))
-                let running = await HelperConnection.shared.forceProbe()
-                helperInstalled = running
-                helperNeedsRepair = running && !HelperInstaller.tokenPermissionsAreSecure()
-                if running && !helperNeedsRepair { break }
-                FocusLogger.info("Helper probe retry \(i+1)/3 failed")
-            }
-            if !helperInstalled || helperNeedsRepair {
-                FocusLogger.info("Helper installed but probe/permission check failed after retries")
-                helperInstallAttempted = false
-                lastError = "后台助手安装后仍需修复，请稍后重试。"
-            }
+            await probeHelperAfterInstall()
         } else {
             FocusLogger.info("Helper install failed")
             helperInstallAttempted = false
@@ -1957,31 +1959,52 @@ class AppState: ObservableObject {
         restartBlockingNoFocusIfNeeded()
     }
 
+    /// 通用的条件轮询骨架：条件不满足时按 `retryDelay` 短睡后重试，满足时按
+    /// `interval` 等待后执行 `action`；执行前会再检查一次条件，避免睡眠期间
+    /// 状态已变化却仍然弹窗。任务取消即退出。
+    ///
+    /// - Parameters:
+    ///   - interval: 条件满足时，两次触发之间的间隔（秒）。
+    ///   - retryDelay: 条件不满足时的短睡间隔（秒），避免空转烧电。
+    ///   - shouldRun: 触发前与长睡前各检查一次。
+    ///   - action: 实际触发逻辑。
+    private func startConditionalPolling(
+        interval: TimeInterval,
+        retryDelay: TimeInterval = 30,
+        shouldRun: @escaping @MainActor () -> Bool,
+        action: @escaping @MainActor () -> Void
+    ) -> Task<Void, Never> {
+        Task { @MainActor in
+            while !Task.isCancelled {
+                guard shouldRun() else {
+                    try? await Task.sleep(for: .seconds(retryDelay))
+                    continue
+                }
+                try? await Task.sleep(for: .seconds(interval))
+                if Task.isCancelled { return }
+                guard shouldRun() else { continue }
+                action()
+            }
+        }
+    }
+
     private func startReminderLoop() {
         stopReminderLoop()
         guard reminderEnabled else { return }
-        reminderTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                // Skip if any blocking state active
-                guard self.reminderEnabled,
-                      !self.blockingEnabled,
-                      !self.focusTimerActive,
-                      !self.delayedBlockActive,
-                      !self.delayedBlockPendingAuth else {
-                    try? await Task.sleep(for: .seconds(30))
-                    continue
-                }
-                let interval = self.reminderIntervalMinutes * 60
-                try? await Task.sleep(for: .seconds(interval))
-                if Task.isCancelled { return }
-                guard self.reminderEnabled,
-                      !self.blockingEnabled,
-                      !self.focusTimerActive,
-                      !self.delayedBlockActive else { continue }
-                self.presentReminderAlert()
-            }
-        }
+        reminderTask = startConditionalPolling(
+            interval: TimeInterval(reminderIntervalMinutes * 60),
+            // 抽取前，长睡后的第二次检查漏了 delayedBlockPendingAuth，导致「屏蔽未生效」
+            // 的授权重试弹窗在屏时可能又弹一个「未屏蔽提醒」。两处检查现已统一为同一条件。
+            shouldRun: { [weak self] in
+                guard let self else { return false }
+                return self.reminderEnabled
+                    && !self.blockingEnabled
+                    && !self.focusTimerActive
+                    && !self.delayedBlockActive
+                    && !self.delayedBlockPendingAuth
+            },
+            action: { [weak self] in self?.presentReminderAlert() }
+        )
     }
 
     private func stopReminderLoop() {
@@ -2018,9 +2041,6 @@ class AppState: ObservableObject {
     private func presentReminderAlert() {
         guard beginReminderModal() else { return }
         defer { endReminderModal() }
-        guard !reminderAlertInFlight else { return }
-        reminderAlertInFlight = true
-        defer { reminderAlertInFlight = false }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "未屏蔽提醒",
             icon: "bell",
@@ -2070,32 +2090,21 @@ class AppState: ObservableObject {
     private func startBlockingNoFocusLoop() {
         stopBlockingNoFocusLoop()
         guard remindBlockingNoFocus else { return }
-        blockingNoFocusTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                // 只在「屏蔽中且无专注计时」时计时，其他状态短睡跳过
-                guard self.remindBlockingNoFocus,
-                      self.blockingEnabled,
-                      !self.restActive,
-                      !self.focusTimerActive,
-                      !self.delayedBlockActive,
-                      !self.delayedBlockPendingAuth,
-                      !self.isFocusEndNagging else {
-                    try? await Task.sleep(for: .seconds(30))
-                    continue
-                }
-                let interval = self.blockingNoFocusIntervalMinutes * 60
-                try? await Task.sleep(for: .seconds(interval))
-                if Task.isCancelled { return }
-                guard self.remindBlockingNoFocus,
-                      self.blockingEnabled,
-                      !self.restActive,
-                      !self.focusTimerActive,
-                      !self.delayedBlockActive,
-                      !self.isFocusEndNagging else { continue }
-                self.presentBlockingNoFocusAlert()
-            }
-        }
+        blockingNoFocusTask = startConditionalPolling(
+            interval: TimeInterval(blockingNoFocusIntervalMinutes * 60),
+            shouldRun: { [weak self] in
+                guard let self else { return false }
+                // 只在「屏蔽中且无专注计时」时计时
+                return self.remindBlockingNoFocus
+                    && self.blockingEnabled
+                    && !self.restActive
+                    && !self.focusTimerActive
+                    && !self.delayedBlockActive
+                    && !self.delayedBlockPendingAuth
+                    && !self.isFocusEndNagging
+            },
+            action: { [weak self] in self?.presentBlockingNoFocusAlert() }
+        )
     }
 
     private func stopBlockingNoFocusLoop() {
@@ -2112,9 +2121,6 @@ class AppState: ObservableObject {
     private func presentBlockingNoFocusAlert() {
         guard beginReminderModal() else { return }
         defer { endReminderModal() }
-        guard !blockingNoFocusInFlight else { return }
-        blockingNoFocusInFlight = true
-        defer { blockingNoFocusInFlight = false }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "已屏蔽未专注",
             icon: "lock.open",
@@ -2332,9 +2338,6 @@ class AppState: ObservableObject {
     private func presentFocusEndReminder() {
         guard beginReminderModal() else { return }
         defer { endReminderModal() }
-        guard !focusEndReminderInFlight else { return }
-        focusEndReminderInFlight = true
-        defer { focusEndReminderInFlight = false }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
             title: "专注计时已结束",
             icon: "timer",

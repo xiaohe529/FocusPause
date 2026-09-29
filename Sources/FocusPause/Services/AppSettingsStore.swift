@@ -2,7 +2,7 @@ import Foundation
 
 /// A typed facade over UserDefaults. AppState and app views should use this
 /// instead of scattering string keys across the codebase.
-struct AppSettingsStore {
+struct AppSettingsStore: Sendable {
     enum Key: String, CaseIterable {
         case ignoredUpdateVersion
         case emergencyQuota
@@ -38,6 +38,8 @@ struct AppSettingsStore {
         case minimizeHintSuppressed
     }
 
+    /// UserDefaults 的读写本身线程安全，但 Foundation 尚未标注 Sendable。
+    /// 本类型只做值语义的转发、不持有可变状态，故此处显式豁免并发检查。
     nonisolated(unsafe) let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
