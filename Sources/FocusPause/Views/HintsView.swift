@@ -45,14 +45,14 @@ struct HintsView: View {
 
                 VStack(alignment: .leading, spacing: 10) {
                     sectionHeader("一些提醒")
-                    Text("前 4 条会出现在提醒弹窗里，其余仅用于编辑排序。")
+                    Text("前 4 条会作为休息事项，出现在提醒弹窗里；其余仅用于编辑排序。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if state.actionPrompts.isEmpty {
                         emptyState(
                             "bell.badge",
                             "还没有提醒。",
-                            "新增后，前 4 条会出现在提醒弹窗里。"
+                            "新增后，前 4 条会作为休息事项，出现在提醒弹窗里。"
                         )
                     }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible())], spacing: 8) {

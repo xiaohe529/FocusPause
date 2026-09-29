@@ -73,18 +73,18 @@ struct MainView: View {
                             }
                         } action: { state.requestEndElapsedFocus() }
                     } else {
-                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "紧急退出", actionColor: .focusDanger, actionDisabled: state.emergencyUsesThisMonth >= state.emergencyQuota) {
+                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "紧急退出", actionColor: .focusDanger) {
                             TimelineView(.periodic(from: .now, by: 1)) { _ in
                                 Text("专注计时中 · 剩余 \(remainingString(end: state.focusTimerEnd))")
                                     .monospacedDigit()
                             }
-                        } action: { state.showEmergencyOverrideSheet = true }
+                        } action: { state.requestEmergencyOverride() }
                     }
                 } else if state.isScheduledLockActive {
-                    InfoBanner(style: .info, icon: "calendar.badge.clock", actionTitle: "紧急退出", actionColor: .focusDanger, actionDisabled: state.scheduledExitUsesThisMonth >= state.scheduledExitQuota) {
+                    InfoBanner(style: .info, icon: "calendar.badge.clock", actionTitle: "紧急退出", actionColor: .focusDanger) {
                         Text("定时屏蔽中 · 本月紧急退出剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth))/\(state.scheduledExitQuota)")
                             .monospacedDigit()
-                    } action: { state.showScheduledExitSheet = true }
+                    } action: { state.requestScheduledExit() }
                 } else if state.delayedBlockPendingAuth {
                     InfoBanner(style: .danger, actionTitle: "去授权") {
                         Text("屏蔽未生效 · 到点未授权")
@@ -152,6 +152,21 @@ struct MainView: View {
         .sheet(isPresented: $state.showSettingsSheet) {
             SettingsView(state: state)
         }
+        .sheet(isPresented: $state.showEndElapsedConfirmation) {
+            ConfirmDialogView(
+                title: "结束正计时",
+                icon: "timer",
+                tint: .focusAccent,
+                message: "将结束当前正计时。屏蔽保持开启，且不消耗紧急退出次数。",
+                confirmTitle: "确认结束",
+                confirmTint: .focusAccent
+            ) {
+                state.endFocusTimerElapsed()
+                state.showEndElapsedConfirmation = false
+            } onCancel: {
+                state.showEndElapsedConfirmation = false
+            }
+        }
         .sheet(isPresented: $state.showEmergencyOverrideSheet, onDismiss: {
             emergencyPasswordInput = ""
             emergencyPasswordError = false
@@ -203,12 +218,17 @@ struct MainView: View {
                 Text("冷静期剩余 \(coolDownString(state.coolDownRemaining))，结束后才能停止屏蔽。")
             }
         }
+        .alert("紧急退出次数已用完", isPresented: $state.showEmergencyQuotaAlert) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(state.emergencyQuotaAlertMessage)
+        }
     }
 
     private var passwordDialogTitle: String {
         switch state.pendingActionLabel {
         case "解除屏蔽": return "确认解除屏蔽"
-        case "结束正计时": return "确认结束正计时"
+        case "取消延时计时": return "确认取消延时计时"
         case "删除条目": return "确认删除条目"
         default: return "输入密码\(state.pendingActionLabel)"
         }
@@ -217,7 +237,7 @@ struct MainView: View {
     private var passwordDialogSubtitle: String {
         switch state.pendingActionLabel {
         case "解除屏蔽": return "解除后要做什么？先确认这是必要的。"
-        case "结束正计时": return "提前结束会中断这次专注。"
+        case "取消延时计时": return "取消后将不会自动开启屏蔽。"
         case "删除条目": return "删除后需要重新添加这条规则。"
         default: return "输入屏蔽密码后才会继续本次操作。"
         }

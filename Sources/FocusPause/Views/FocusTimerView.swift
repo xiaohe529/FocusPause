@@ -528,13 +528,12 @@ struct FocusTimerView: View {
             HStack {
                 Spacer()
                 Button {
-                    state.showScheduledExitSheet = true
+                    state.requestScheduledExit()
                 } label: {
                     Label("紧急退出", systemImage: "xmark.shield")
                         .padding(.vertical, 5)
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-                .disabled(state.scheduledExitUsesThisMonth >= state.scheduledExitQuota)
                 Spacer()
             }
             Text("剩余 \(max(0, state.scheduledExitQuota - state.scheduledExitUsesThisMonth)) 次 · 紧急退出只解除当前时间段锁定，屏蔽保持开启；其他时间段仍可编辑。")
@@ -903,7 +902,7 @@ struct FocusTimerView: View {
                 .frame(width: 228, height: 228)
             }
 
-            Text(state.isElapsedFocus ? "屏蔽设置已锁定 · 结束需密码" : "屏蔽设置已锁定")
+            Text(state.isElapsedFocus ? "屏蔽设置已锁定 · 结束需确认" : "屏蔽设置已锁定")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
@@ -930,13 +929,12 @@ struct FocusTimerView: View {
                         .foregroundStyle(.secondary)
 
                     Button {
-                        state.showEmergencyOverrideSheet = true
+                        state.requestEmergencyOverride()
                     } label: {
                         Label("紧急退出", systemImage: "xmark.shield")
                             .padding(.vertical, 6)
                     }
                     .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-                    .disabled(state.emergencyUsesThisMonth >= state.emergencyQuota)
                 }
             }
             .padding(.top, 2)
@@ -1001,7 +999,7 @@ struct FocusTimerView: View {
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
 
                 Button {
-                    state.cancelDelayedBlock()
+                    state.requestCancelDelayedBlock()
                 } label: {
                     Label("取消计时", systemImage: "xmark")
                         .padding(.vertical, 6)
