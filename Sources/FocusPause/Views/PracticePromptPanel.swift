@@ -604,11 +604,15 @@ private final class FocusHostingController<Content: View>: NSHostingController<C
     }
 }
 
+private final class FocusModalPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 /// AppKit 层：把 `PracticePromptPanel` 包进 `NSPanel`，以模态方式运行，返回选择结果。
 @MainActor
 enum PromptPanelPresenter {
     static func run(_ config: PromptPanelConfig) -> PanelResult {
-        let panel = NSPanel(
+        let panel = FocusModalPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
             styleMask: [.titled, .utilityWindow],
             backing: .buffered,
@@ -617,9 +621,11 @@ enum PromptPanelPresenter {
         panel.isFloatingPanel = true
         panel.level = .modalPanel
         panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         // 关键：让 utility 面板能正常成为 key window（默认 becomesKeyOnlyIfNeeded=true 会拒绝键盘焦点，
         // 导致弹窗里的输入框点进去不显示光标）。
         panel.becomesKeyOnlyIfNeeded = false
+        panel.worksWhenModal = true
         panel.isMovableByWindowBackground = true
 
         let result = PanelResult()
