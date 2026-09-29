@@ -77,10 +77,11 @@ enum Updater {
         try FileManager.default.moveItem(at: tempURL, to: destination)
     }
 
-    /// Downloads the release asset to the user's Downloads folder and reveals it
-    /// in Finder. When a matching `.sha256` asset exists next to the download it is
-    /// fetched too and the archive's digest is verified before the file is kept.
-    /// Returns an error message on failure, or nil on success.
+    /// Downloads the release asset to the user's Downloads folder, verifies it when
+    /// the release publishes a matching `.sha256` asset, then opens it. A DMG is
+    /// mounted so the drag-to-Applications window appears immediately; any other
+    /// archive is revealed in Finder instead. Returns an error message on failure,
+    /// or nil on success.
     static func downloadAndOpen(_ url: URL) async -> String? {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
             .appendingPathComponent(url.lastPathComponent)
@@ -90,7 +91,13 @@ enum Updater {
                 try? FileManager.default.removeItem(at: downloads)
                 return problem
             }
-            NSWorkspace.shared.open(downloads)
+            if downloads.pathExtension.lowercased() == "dmg" {
+                // Mount and show the installer window; the user drags across without
+                // a second double-click in Finder.
+                NSWorkspace.shared.open(downloads)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([downloads])
+            }
             return nil
         } catch {
             return "下载失败：\(error.localizedDescription)"

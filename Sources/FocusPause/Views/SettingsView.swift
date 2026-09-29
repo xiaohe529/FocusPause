@@ -739,10 +739,13 @@ struct SettingsView: View {
             updateStatus = .failed(problem)
             return
         }
-        // 拖拽覆盖前必须先退出正在运行的旧版，否则 /Applications 里的替换会失败。
+        // 替换正在运行的 app 会失败，所以退出前先提醒；已退出就不用打扰。
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            .contains(where: { !$0.isTerminated })
+        else { return }
         let alert = NSAlert()
-        alert.messageText = "安装包已下载"
-        alert.informativeText = "请先退出当前运行的 FocusPause，再把 FocusPause 拖入「应用程序」完成覆盖安装。"
+        alert.messageText = "请先退出 FocusPause"
+        alert.informativeText = "覆盖安装前需要退出正在运行的 FocusPause。菜单栏图标右键选择「退出」，或点「好」后到菜单栏退出，再把 FocusPause 拖入「应用程序」。"
         alert.addButton(withTitle: "好")
         alert.runModal()
     }
