@@ -13,7 +13,7 @@ class SettingsWindowController: NSWindowController {
             backing: .buffered,
             defer: true
         )
-        window.title = "Focus&Pause"
+        window.title = "FocusPause"
         window.minSize = NSSize(width: 640, height: 640)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("FocusPauseSettings")

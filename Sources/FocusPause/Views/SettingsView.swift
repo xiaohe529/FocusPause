@@ -166,7 +166,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("开机启动")
                             .font(.subheadline)
-                        Text("登录时自动启动 Focus&Pause")
+                        Text("登录时自动启动 FocusPause")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

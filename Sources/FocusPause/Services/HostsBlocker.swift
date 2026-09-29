@@ -1,8 +1,7 @@
 import Foundation
+import FocusPauseHelperShared
 
 struct HostsBlocker {
-    static let markerBegin = "# FocusPause BEGIN"
-    static let markerEnd = "# FocusPause END"
     static let hostsPath = "/etc/hosts"
 
     static func backupDir() -> URL {

@@ -27,7 +27,8 @@ enum KeychainPassword {
 
     static func verify(_ password: String) -> Bool {
         let stored = load()
-        // Constant-time comparison
+        // 逐字节比较，避免逐字符早退。严格说长度不等时仍会提前返回（时序侧信道），
+        // 但这里防的是本机冲动解锁、不是保护密钥，足够用了。
         guard let a = stored?.data(using: .utf8), let b = password.data(using: .utf8) else {
             return stored == password
         }

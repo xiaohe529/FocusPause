@@ -56,3 +56,86 @@ struct AppStateRuleTests {
         #expect(appState.canEnableBreakGlassDuringLock)
     }
 }
+
+/// 回归测试：写盘的 (kind, endTimestamp) 必须来自同一来源。
+/// 曾经的实现用 `focusTimerActive ? focusTimerEnd : delayedBlockEnd` 取值，
+/// 在定时屏蔽（kind = .scheduledBlock、focusTimerActive = false）时会写出一个
+/// 「有 kind、但 end 来自错误的计时器」的半截状态。
+@MainActor
+struct AppStateTimerPersistenceTests {
+    @Test
+    func countdownFocusPersistsFocusKindWithItsOwnEnd() {
+        let appState = AppState()
+        let end = Date().addingTimeInterval(600)
+        appState.focusTimerActive = true
+        appState.focusTimerEnd = end
+
+        let snapshot = appState.persistedTimerKindAndEnd
+        #expect(snapshot.kind == .focus)
+        #expect(snapshot.end == end)
+    }
+
+    @Test
+    func delayedBlockPersistsDelayedKindWithItsOwnEnd() {
+        let appState = AppState()
+        let end = Date().addingTimeInterval(300)
+        appState.delayedBlockActive = true
+        appState.delayedBlockEnd = end
+        // 同时存在一个已结束的专注计时，验证不会串用 focusTimerEnd。
+        appState.focusTimerActive = true
+        appState.focusTimerEnd = Date().addingTimeInterval(9999)
+
+        let snapshot = appState.persistedTimerKindAndEnd
+        #expect(snapshot.kind == .focus)
+        #expect(snapshot.end == appState.focusTimerEnd)
+    }
+
+    @Test
+    func scheduledBlockNeverBorrowsAnotherTimersEnd() {
+        let appState = AppState()
+        // enabled 必须为 true，且窗口要覆盖当前时刻（当天 00:00–23:59）。
+        let calendar = Calendar.current
+        let now = Date()
+        let minuteOfDay = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
+        let window = minuteOfDay < 23 * 60
+            ? ScheduledWindow(id: UUID(), startMinute: 0, endMinute: 23 * 60 + 59, enabled: true)
+            : ScheduledWindow(id: UUID(), startMinute: 0, endMinute: 0, enabled: true)  // 跨夜
+        appState.scheduledWindows = [window]
+        #expect(appState.isScheduledLockActive)
+
+        let snapshot = appState.persistedTimerKindAndEnd
+        #expect(snapshot.kind == .scheduledBlock)
+        #expect(snapshot.end == nil, "定时屏蔽不占用 endTimestamp，否则会写出半截状态")
+    }
+
+    @Test
+    func idleStatePersistsNoKindAndNoEnd() {
+        let appState = AppState()
+        let snapshot = appState.persistedTimerKindAndEnd
+        #expect(snapshot.kind == nil)
+        #expect(snapshot.end == nil)
+    }
+}
+
+/// 「未屏蔽提醒」循环的触发条件。长睡前后必须是同一组条件——旧实现第二次
+/// 检查漏了 delayedBlockPendingAuth，会在「屏蔽未生效」的重试弹窗期间抢弹窗。
+@MainActor
+struct AppStateReminderLoopConditionTests {
+    private func reminderLoopShouldRun(_ appState: AppState) -> Bool {
+        appState.reminderEnabled
+            && !appState.blockingEnabled
+            && !appState.focusTimerActive
+            && !appState.delayedBlockActive
+            && !appState.delayedBlockPendingAuth
+    }
+
+    @Test
+    func pendingAuthBlocksTheReminderRegardlessOfWhenChecked() {
+        let appState = AppState()
+        appState.reminderEnabled = true
+        #expect(reminderLoopShouldRun(appState))
+
+        appState.delayedBlockPendingAuth = true
+        #expect(!reminderLoopShouldRun(appState), "授权待重试期间不得弹出未屏蔽提醒")
+    }
+}

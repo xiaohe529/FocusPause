@@ -121,9 +121,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem(title: "App", action: nil, keyEquivalent: "")
         appMenuItem.submenu = {
             let appMenu = NSMenu(title: "App")
-            appMenu.addItem(withTitle: "关于 Focus&Pause", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            appMenu.addItem(withTitle: "关于 FocusPause", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             appMenu.addItem(NSMenuItem.separator())
-            appMenu.addItem(withTitle: "退出 Focus&Pause", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            appMenu.addItem(withTitle: "退出 FocusPause", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return appMenu
         }()
         mainMenu.addItem(appMenuItem)

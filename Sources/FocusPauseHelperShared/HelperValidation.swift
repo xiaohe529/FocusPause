@@ -92,8 +92,10 @@ public enum HelperValidation {
             result.append(line)
         }
 
-        // A missing end marker must not leak the partial FocusPause section.
+        // `removing` 仍为 true 表示 hosts 被截断在 BEGIN 之后、缺少 END 标记。
+        // 上面的循环已经把这一整段丢弃，所以两种情况下 result 都是干净的；
+        // 这里无需再分支，但保留显式说明以免后来者重新引入无意义的三元。
         while result.last?.isEmpty == true { result.removeLast() }
-        return removing ? result : result
+        return result
     }
 }
