@@ -2,12 +2,13 @@ import SwiftUI
 
 struct AppListView: View {
     @ObservedObject var state: AppState
-    @State private var newApp = ""
     @State private var showAppPicker = false
     @State private var isLoadingApps = false
     @State private var pickerApps: [String]? = nil
     @State private var revertingRuleID: UUID? = nil
     @State private var pendingDeleteID: UUID? = nil
+    /// App 搜索关键字（App 是固定的，搜索后点击即添加，避免手打不准）。
+    @State private var searchQuery = ""
 
     var appRules: [BlockRule] {
         state.blockRules.filter { $0.type == .app }
@@ -15,49 +16,92 @@ struct AppListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Input row
-            HStack {
-                TextField("输入 App 精确名称，如「微信」「Google Chrome」", text: $newApp)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { addApp() }
-                Button("添加", action: addApp)
-                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
-                    .disabled(newApp.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button {
-                    showAppPicker = true
-                    loadInstalledApps()
-                } label: {
-                    if isLoadingApps {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
+            // 搜索框：App 是固定的，从已安装列表里搜、点一下就添加，避免手打不准。
+            // 右侧保留「选择」按钮，打开完整列表挑选，两种入口并存。
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("搜索或输入 App 名称，如「微信」「Chrome」", text: $searchQuery)
+                            .textFieldStyle(.plain)
+                            .onSubmit { addFirstSearchResult() }
+                        if !searchQuery.isEmpty {
+                            Button {
+                                searchQuery = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
+                            .strokeBorder(Color.surfaceHairline, lineWidth: 1)
+                    )
+
+                    Button {
+                        showAppPicker = true
+                        loadInstalledApps()
+                    } label: {
                         Label("选择", systemImage: "list.bullet")
-                            .font(.body)
+                    }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
+                    .help("从已安装 App 中挑选")
+                }
+
+                Text("屏蔽开启后，这些 App 会被强制关闭。")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                // 搜索结果：只在输入关键字时出现，避免与下方名单板块视觉重复。
+                if isLoadingApps {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("正在读取已安装 App…")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                } else if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                    if searchResults.isEmpty {
+                        Text("没有找到匹配的 App。")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(searchResults, id: \.self) { app in
+                                    searchResultRow(app)
+                                }
+                            }
+                            .focusList()
+                        }
+                        .frame(maxHeight: 220)
                     }
                 }
-                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
-                .disabled(isLoadingApps)
-                .help("从已安装 App 中选择")
             }
-            Text("屏蔽开启后，这些 App 会被强制关闭。")
-                .font(.caption).foregroundStyle(.secondary)
-
-            Divider()
 
             // App list
             if appRules.isEmpty {
                 emptyView
             } else {
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 0) {
                         ForEach($state.blockRules) { $rule in
                             if rule.type == .app {
                                 appRow($rule)
                             }
                         }
                     }
+                    .focusList()
                 }
             }
+        }
+        .onAppear {
+            if pickerApps == nil { loadInstalledApps() }
         }
         .sheet(isPresented: $showAppPicker) {
             VStack(spacing: 12) {
@@ -71,6 +115,12 @@ struct AppListView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                Text("点击右侧「＋」加入屏蔽名单；已在名单中的会显示为已添加。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Color.clear.frame(height: 0)
+                    .onAppear { if pickerApps == nil { loadInstalledApps() } }
 
                 if isLoadingApps {
                     Spacer()
@@ -100,8 +150,9 @@ struct AppListView: View {
                         ScrollView {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
                                 ForEach(apps, id: \.self) { appName in
+                                    let added = state.blockRules.contains { $0.name == appName && $0.type == .app }
                                     Button {
-                                        addFromPicker(appName)
+                                        if !added { addFromPicker(appName) }
                                     } label: {
                                         HStack(spacing: 8) {
                                             appIcon(for: appName)
@@ -110,12 +161,23 @@ struct AppListView: View {
                                                 .font(.subheadline)
                                                 .lineLimit(1)
                                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                            if added {
+                                                Text("已添加")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.tertiary)
+                                            } else {
+                                                Image(systemName: "plus.circle")
+                                                    .foregroundStyle(Color.focusAccent)
+                                            }
                                         }
                                         .padding(.vertical, 7)
                                         .padding(.horizontal, 8)
-                                        .background(.quaternary, in: RoundedRectangle(cornerRadius: FocusRadius.control))
+                                        .focusRow()
+                                        .contentShape(Rectangle())
+                                        .opacity(added ? 0.5 : 1)
                                     }
                                     .buttonStyle(.plain)
+                                    .disabled(added)
                                 }
                             }
                             .padding(.vertical, 2)
@@ -123,20 +185,30 @@ struct AppListView: View {
                         .frame(minHeight: 250)
                     }
                 }
-                HStack {
-                    Spacer()
-                    Button("关闭") { showAppPicker = false }
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    Button("取消") { showAppPicker = false }
+                        .buttonStyle(AlwaysActiveTintedButtonStyle())
+                    Button("完成") { showAppPicker = false }
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                 }
             }
             .padding()
             .frame(width: 520, height: 440)
         }
-        .alert("删除条目？", isPresented: Binding(
+        // 与其余弹窗统一：自绘 ConfirmDialogView（原来用系统 .alert，按钮配色不一致）。
+        .sheet(isPresented: Binding(
             get: { pendingDeleteID != nil },
             set: { if !$0 { pendingDeleteID = nil } }
         )) {
-            Button("取消", role: .cancel) { pendingDeleteID = nil }
-            Button("删除", role: .destructive) {
+            ConfirmDialogView(
+                title: "删除条目？",
+                icon: "trash",
+                tint: .focusDanger,
+                message: pendingDeleteMessage,
+                confirmTitle: "删除",
+                confirmTint: .focusDanger
+            ) {
                 if let id = pendingDeleteID {
                     let rule = state.blockRules.first { $0.id == id }
                     state.blockRules.removeAll { $0.id == id }
@@ -144,14 +216,55 @@ struct AppListView: View {
                     if let rule { FocusLogger.info("Deleted app rule: \(rule.name)") }
                     Task { _ = await state.save() }
                 }
-            }
-        } message: {
-            if let id = pendingDeleteID, let r = state.blockRules.first(where: { $0.id == id }) {
-                Text("确定要删除「\(r.name)」吗？此操作不可撤销。")
-            } else {
-                Text("确定要删除这条规则吗？")
+            } onCancel: {
+                pendingDeleteID = nil
             }
         }
+    }
+
+    private var pendingDeleteMessage: String {
+        if let id = pendingDeleteID, let r = state.blockRules.first(where: { $0.id == id }) {
+            return "确定要删除「\(r.name)」吗？此操作不可撤销。"
+        }
+        return "确定要删除这条规则吗？"
+    }
+
+    /// 过滤后的已安装 App（排除已添加的）。
+    private var searchResults: [String] {
+        guard let apps = pickerApps else { return [] }
+        let q = searchQuery.trimmingCharacters(in: .whitespaces).lowercased()
+        let already = Set(appRules.map { $0.name.lowercased() })
+        return apps
+            .filter { !already.contains($0.lowercased()) }
+            .filter { q.isEmpty || $0.lowercased().contains(q) }
+            .sorted()
+    }
+
+    @ViewBuilder
+    private func searchResultRow(_ appName: String) -> some View {
+        Button {
+            addFromPicker(appName)
+        } label: {
+            HStack(spacing: 8) {
+                appIcon(for: appName)
+                    .frame(width: 20, height: 20)
+                Text(appName)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "plus.circle")
+                    .foregroundStyle(Color.focusAccent)
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .focusRow()
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func addFirstSearchResult() {
+        if let first = searchResults.first { addFromPicker(first) }
     }
 
     @ViewBuilder
@@ -186,8 +299,8 @@ struct AppListView: View {
             .toggleStyle(AlwaysActiveSwitchStyle())
             Spacer()
             Button {
-                if let lockedError = state.ruleListLockedError() {
-                    state.lastError = lockedError
+                if state.ruleListLockedError() != nil {
+                    state.presentRuleListLockedNotice()
                     return
                 }
                 if state.hasPassword {
@@ -207,9 +320,9 @@ struct AppListView: View {
             }
             .buttonStyle(AlwaysActiveBorderlessStyle())
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .focusRow(cornerRadius: FocusRadius.card)
         .onChange(of: rule.enabled.wrappedValue) { oldValue, newState in
             if revertingRuleID == r.id {
                 revertingRuleID = nil
@@ -223,7 +336,7 @@ struct AppListView: View {
                 if state.isLocked || state.blockingEnabled {
                     revertingRuleID = ruleID
                     rule.enabled.wrappedValue = oldValue
-                    state.lastError = state.blockingEnabled ? "屏蔽开启中，名单已锁定，无法关闭规则" : "专注计时中，无法解除屏蔽规则"
+                    state.presentRuleListLockedNotice()
                     return
                 }
                 // Disabling (ON→OFF): allowed without password when not blocking
@@ -265,16 +378,6 @@ struct AppListView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 22, height: 22)
         }
-    }
-
-    func addApp() {
-        let clean = newApp.trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty,
-              !state.blockRules.contains(where: { $0.name == clean && $0.type == .app })
-        else { return }
-        state.blockRules.append(BlockRule(name: clean, type: .app))
-        Task { _ = await state.save() }
-        newApp = ""
     }
 
     func addFromPicker(_ appName: String) {

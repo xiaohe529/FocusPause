@@ -36,6 +36,8 @@ struct AppSettingsStore: Sendable {
         case toolboxGroups
         case toolboxLinks
         case minimizeHintSuppressed
+        case accentTheme
+        case appearanceTheme
     }
 
     /// UserDefaults 的读写本身线程安全，但 Foundation 尚未标注 Sendable。

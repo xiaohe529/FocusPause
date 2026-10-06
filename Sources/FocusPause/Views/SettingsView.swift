@@ -3,7 +3,6 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject var state: AppState
-    @Environment(\.dismiss) private var dismiss
 
     /// 未屏蔽提醒间隔（可直接输入）。
     private var reminderIntervalBinding: Binding<Int> {
@@ -52,33 +51,27 @@ struct SettingsView: View {
 
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    generalSection
-                    Divider().padding(.horizontal, -16)
-                    reminderSection
-                    Divider().padding(.horizontal, -16)
-                    coolingSection
-                    Divider().padding(.horizontal, -16)
-                    emergencyQuotaSection
-                    Divider().padding(.horizontal, -16)
-                    reminderAfterBlockSection
-                    Divider().padding(.horizontal, -16)
-                    passwordSection
-                    Divider().padding(.horizontal, -16)
-                    advancedSection
-                    Divider().padding(.horizontal, -16)
-                    updateSection
-                }
-                .padding()
+        // 直接住在主窗口里：内容区自己滚动，宽度自适应窗口，不再固定成小窗尺寸。
+        ScrollView {
+            // 分组只靠留白：相关项贴紧、无关分组拉开，不再每节之间钉一条分割线。
+            VStack(alignment: .leading, spacing: 28) {
+                generalSection
+                appearanceSection
+                reminderSection
+                coolingSection
+                emergencyQuotaSection
+                reminderAfterBlockSection
+                passwordSection
+                advancedSection
+                updateSection
             }
-            Divider()
-            footer
+            .padding(.vertical, 20)
+            .padding(.horizontal)
+            .frame(maxWidth: 640, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
-        .frame(width: 500, height: 580)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .tint(Color.focusAccent)
         .sheet(isPresented: $showBreakGlassSetup, onDismiss: {
             breakGlassSetupDisabling = false
         }) {
@@ -135,28 +128,85 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Header / Footer
-
-    private var header: some View {
-        HStack {
-            Text("设置").font(.headline)
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 12)
-    }
-
-    private var footer: some View {
-        HStack {
-            Spacer()
-            Button("完成") { dismiss() }
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
+    /// 后台助手状态色：正常 = 运行色，异常/需要修复 = 注意色。
+    private var helperStatusTint: Color {
+        if state.helperNeedsRepair { return .secondary }
+        return state.helperInstalled ? .focusAccent : .secondary
     }
 
     // MARK: - 通用
+
+    // MARK: - 外观（主题 + 强调色）
+
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("外观")
+            VStack(alignment: .leading, spacing: 14) {
+                // 外观主题：跟随系统 / 浅色 / 深色
+                HStack {
+                    Text("主题")
+                        .font(.subheadline)
+                    Spacer()
+                    MiniSegmented(
+                        options: [
+                            (AppearanceTheme.system, "跟随系统"),
+                            (AppearanceTheme.light, "浅色"),
+                            (AppearanceTheme.dark, "深色"),
+                        ],
+                        selection: Binding(
+                            get: { state.appearanceTheme },
+                            set: { state.setAppearanceTheme($0) }
+                        )
+                    )
+                    .frame(width: 240)
+                }
+
+                Divider()
+
+                // 强调色：四选一
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("强调色")
+                        .font(.subheadline)
+                    HStack(spacing: 16) {
+                        ForEach(AccentTheme.allCases) { theme in
+                            accentSwatch(theme)
+                        }
+                        Spacer()
+                    }
+                    Text("用在主按钮、当前分区、选中项上。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .focusCard()
+        }
+    }
+
+    /// 单个强调色样：圆形色块；选中时加一圈描边。
+    private func accentSwatch(_ theme: AccentTheme) -> some View {
+        let c = theme.colors
+        let color = Color(light: c.light, dark: c.dark)
+        let isSelected = state.accentTheme == theme
+        return Button {
+            state.setAccentTheme(theme)
+        } label: {
+            VStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 22, height: 22)
+                    .overlay(
+                        Circle().strokeBorder(Color.primary.opacity(isSelected ? 0.55 : 0), lineWidth: 2)
+                            .padding(-4)
+                    )
+                Text(theme.label)
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(theme.label)
+    }
 
     private var generalSection: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -171,12 +221,12 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
                 .onChange(of: state.launchAtLogin) { _, v in state.setLaunchAtLogin(v) }
 
                 HStack {
                     Image(systemName: state.helperNeedsRepair ? "exclamationmark.shield.fill" : (state.helperInstalled ? "checkmark.shield.fill" : "exclamationmark.shield.fill"))
-                        .foregroundStyle(state.helperNeedsRepair ? .orange : (state.helperInstalled ? .green : .orange))
+                        .foregroundStyle(helperStatusTint)
                         .frame(width: 20)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("后台助手")
@@ -225,7 +275,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
 
                 HStack {
                     Text("提醒间隔")
@@ -256,7 +306,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
 
                 HStack {
                     Text("提醒间隔")
@@ -295,7 +345,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
 
                 if state.coolingEnabled {
                     HStack {
@@ -335,7 +385,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
 
                 Toggle(isOn: Binding(
                     get: { state.remindDelayedBlockAfterUnblock },
@@ -351,7 +401,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .toggleStyle(.switch)
+                .toggleStyle(AlwaysActiveSwitchStyle())
             }
             .focusCard()
         }
@@ -440,7 +490,7 @@ struct SettingsView: View {
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                     }
-                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                    .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
 
                     Button("取消") {
                         draft.wrappedValue = nil
@@ -504,9 +554,11 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         SecureField("恢复码", text: $recoveryInput1)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
+                            .focusField()
                         SecureField("再次输入恢复码", text: $recoveryInput2)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
+                            .focusField()
                             .onSubmit { recoverPassword() }
                         Button {
                             recoverPassword()
@@ -518,7 +570,7 @@ struct SettingsView: View {
                         if !recoveryError.isEmpty {
                             Text(recoveryError)
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Color.focusInk)
                         }
                         if let pwd = revealedPassword {
                             VStack(alignment: .leading, spacing: 4) {
@@ -549,9 +601,11 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         SecureField("恢复码", text: $deletePwdInput1)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
+                            .focusField()
                         SecureField("再次输入恢复码", text: $deletePwdInput2)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(.plain)
+                            .focusField()
                             .onSubmit { deletePassword() }
                         Button {
                             deletePassword()
@@ -563,12 +617,12 @@ struct SettingsView: View {
                         if !deletePwdError.isEmpty {
                             Text(deletePwdError)
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Color.focusInk)
                         }
                         if deletePwdSuccess {
                             Text("密码已删除")
                                 .font(.caption)
-                                .foregroundStyle(.green)
+                                .foregroundStyle(Color.focusAccent)
                         }
                     }
                     .padding(.top, 8)
@@ -587,7 +641,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 Image(systemName: state.breakGlassEnabled ? "lock.open.rotation" : "lock.rotation")
-                    .foregroundStyle(state.breakGlassEnabled ? Color.focusDanger : Color.secondary)
+                    .foregroundStyle(state.breakGlassEnabled ? Color.focusInk : Color.secondary)
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -620,7 +674,6 @@ struct SettingsView: View {
                     showBreakGlassUnlock = true
                 } label: {
                     Label("发起应急解锁", systemImage: "lock.open.rotation")
-                        .padding(.vertical, 4)
                 }
                 .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
             } else if let cooldownEnd = state.breakGlassCooldownEnd {
@@ -631,7 +684,6 @@ struct SettingsView: View {
                                 Task { await state.completeBreakGlassUnlock() }
                             } label: {
                                 Label("确认解除所有屏蔽", systemImage: "checkmark.circle.fill")
-                                    .padding(.vertical, 4)
                             }
                             .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
                         } else {
@@ -702,8 +754,7 @@ struct SettingsView: View {
                             systemImage: downloadURL != nil ? "arrow.down.circle" : "arrow.up.right.square"
                         )
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                     .disabled(isDownloading)
                 }
             }
@@ -744,44 +795,58 @@ struct SettingsView: View {
     // MARK: - 密码修改 sheet
 
     private var passwordSheet: some View {
-        VStack(spacing: 16) {
-            Text(state.hasPassword ? "修改屏蔽密码" : "设置屏蔽密码")
-                .font(.headline)
-            if state.hasPassword {
-                SecureField("输入旧密码", text: $oldPassword)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 220)
-                    .focused($passwordFieldFocus, equals: .old)
-                    .onSubmit { passwordFieldFocus = .new }
+        // 与其它弹窗统一：DialogShell 白卡 + 自定义输入框 + 主题色按钮。
+        // 之前这里用的是原生 .roundedBorder / .borderedProminent，所以是系统蓝、跟别处不一致。
+        DialogShell(width: 380) {
+            DialogHeader(
+                title: state.hasPassword ? "修改屏蔽密码" : "设置屏蔽密码",
+                icon: "key.fill",
+                tint: .focusAccent,
+                subtitle: state.hasPassword
+                    ? "需要先输入旧密码；新密码用于停止屏蔽与紧急退出。"
+                    : "设置后，停止屏蔽需验证密码。"
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                if state.hasPassword {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("旧密码").font(.caption).foregroundStyle(.secondary)
+                        DialogSecureField(text: $oldPassword, placeholder: "输入旧密码")
+                            .frame(height: 26)
+                            .focused($passwordFieldFocus, equals: .old)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(state.hasPassword ? "新密码" : "密码")
+                        .font(.caption).foregroundStyle(.secondary)
+                    DialogSecureField(text: $newPassword,
+                                      placeholder: state.hasPassword ? "输入新密码" : "输入密码")
+                        .frame(height: 26)
+                        .focused($passwordFieldFocus, equals: .new)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("确认密码").font(.caption).foregroundStyle(.secondary)
+                    DialogSecureField(text: $confirmPassword, placeholder: "再次输入")
+                        .frame(height: 26)
+                        .focused($passwordFieldFocus, equals: .confirm)
+                        .onSubmit { savePassword() }
+                }
             }
-            SecureField(state.hasPassword ? "输入新密码" : "输入密码", text: $newPassword)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
-                .focused($passwordFieldFocus, equals: .new)
-                .onSubmit { passwordFieldFocus = .confirm }
-            SecureField("确认密码", text: $confirmPassword)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 220)
-                .focused($passwordFieldFocus, equals: .confirm)
-                .onSubmit { savePassword() }
+
             if !passwordError.isEmpty {
                 Text(passwordError)
-                    .foregroundStyle(.red)
                     .font(.caption)
+                    .foregroundStyle(Color.focusDanger)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 16) {
-                Button("取消") {
-                    showPasswordSheet = false
-                }
-                Button(state.hasPassword ? "保存" : "设置") {
-                    savePassword()
-                }
-                .buttonStyle(.borderedProminent)
+        } secondary: {
+            Button("取消") { showPasswordSheet = false }
+                .buttonStyle(AlwaysActiveTintedButtonStyle())
+        } primary: {
+            Button(state.hasPassword ? "保存" : "设置") { savePassword() }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                 .disabled(newPassword != confirmPassword || newPassword.isEmpty)
-            }
         }
-        .padding()
-        .frame(width: 320, height: state.hasPassword ? 320 : 240)
         .onAppear {
             DispatchQueue.main.async {
                 passwordFieldFocus = state.hasPassword ? .old : .new

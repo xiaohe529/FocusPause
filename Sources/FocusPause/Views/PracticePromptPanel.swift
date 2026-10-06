@@ -34,13 +34,9 @@ enum PromptPanelTone {
     case warning
     case danger
 
-    var color: Color {
-        switch self {
-        case .normal: return .focusAccent
-        case .warning: return .orange
-        case .danger: return .focusDanger
-        }
-    }
+    /// 弹窗一律用同一个强调色：状态差异靠图标与文案表达，不再有黑色/中性色的主按钮
+    /// （否则会出现「有的弹窗按钮是黑的」这种不统一）。
+    var color: Color { .focusAccent }
 
     var badge: String {
         switch self {
@@ -158,9 +154,13 @@ struct PracticePromptPanel: View {
             }
             footer
         }
-        .padding(18)
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
         .frame(width: 390, alignment: .top)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color.surfaceCanvas)
+        .ignoresSafeArea()   // 让内容真正顶到面板顶部，不再留出标题栏那条空白
+        .tint(Color.focusAccent)
         .onAppear {
             pickRandomTextHint(forceDifferent: false)
             if config.showGoal {
@@ -187,12 +187,11 @@ struct PracticePromptPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if config.showModePicker {
-                    Picker("模式", selection: $elapsedMode) {
-                        Text("倒计时").tag(false)
-                        Text("正计时").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 250)
+                    MiniSegmented(
+                        options: [(false, "倒计时"), (true, "正计时")],
+                        selection: $elapsedMode
+                    )
+                    .frame(maxWidth: 220)
                 }
 
                 if config.showModePicker && elapsedMode {
@@ -291,7 +290,7 @@ struct PracticePromptPanel: View {
                             Text(sectionActionTitle)
                                 .frame(minWidth: 82, minHeight: 26)
                         }
-                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                         .help(sectionActionTitle)
                     }
                 }
@@ -338,7 +337,7 @@ struct PracticePromptPanel: View {
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .background(Color.secondary.opacity(0.10), in: Capsule())
+                        .focusChip()
                         .foregroundStyle(Color.primary)
                         .contentShape(Capsule())
                     }
@@ -382,20 +381,7 @@ struct PracticePromptPanel: View {
                                 .font(.caption)
                                 .padding(.horizontal, 9)
                                 .padding(.vertical, 5)
-                                .background(
-                                    restEvent == choice
-                                        ? Color.focusAccent.opacity(0.18)
-                                        : Color.secondary.opacity(0.10),
-                                    in: Capsule()
-                                )
-                                .overlay {
-                                    Capsule().strokeBorder(
-                                        restEvent == choice
-                                            ? Color.focusAccent.opacity(0.6)
-                                            : Color.clear,
-                                        lineWidth: 1
-                                    )
-                                }
+                                .focusChip(isSelected: restEvent == choice)
                         }
                         .buttonStyle(.plain)
                     }
@@ -425,8 +411,10 @@ struct PracticePromptPanel: View {
                 .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
             }
         }
-        .padding(10)
-        .background(Color.focusAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.surfaceHairline).frame(height: 1)
+        }
     }
 
     private var restChoices: [String] {
@@ -444,7 +432,7 @@ struct PracticePromptPanel: View {
                     Label("暂停一下", systemImage: "pause.circle.fill")
                         .frame(minWidth: 118, minHeight: 28)
                 }
-                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusActive))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
 
                 Button {
                     result.goal = goal
@@ -467,8 +455,10 @@ struct PracticePromptPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.surfaceHairline).frame(height: 1)
+        }
     }
 
     private var textHintSection: some View {
@@ -489,9 +479,8 @@ struct PracticePromptPanel: View {
                     .foregroundStyle(.tertiary)
             }
             .font(.body)
-            .padding(10)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.card))
-            .contentShape(RoundedRectangle(cornerRadius: FocusRadius.card))
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("换一句")
@@ -522,25 +511,32 @@ struct PracticePromptPanel: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            Spacer()
-            if let tertiaryTitle = config.tertiaryTitle {
-                Button(tertiaryTitle) {
-                    result.choice = .tertiary
-                    dismiss()
+        // 次要按钮靠左、第三按钮靠右，上压一条细线；不再两侧各留一个 Spacer
+        // 把按钮顶在中间、左右空一大片。
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.surfaceDivider)
+                .frame(height: 1)
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                if let secondaryTitle = config.secondaryTitle {
+                    Button(secondaryTitle) {
+                        result.choice = .secondary
+                        dismiss()
+                    }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            }
-            if let secondaryTitle = config.secondaryTitle {
-                Button(secondaryTitle) {
-                    result.choice = .secondary
-                    dismiss()
+                if let tertiaryTitle = config.tertiaryTitle {
+                    Button(tertiaryTitle) {
+                        result.choice = .tertiary
+                        dismiss()
+                    }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
             }
-            Spacer()
+            .padding(.top, 12)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 14)
         }
     }
 
@@ -593,18 +589,18 @@ struct PracticePromptPanel: View {
 
 /// 自定义 hosting view：确保面板内 SwiftUI 文本框「第一次点击」就能获得焦点并显示光标。
 /// 默认 NSHostingView 不接收 first mouse / 不作为 first responder，导致 NSPanel 里点输入框没光标、要点两次。
-private final class FocusHostingView<Content: View>: NSHostingView<Content> {
+final class FocusHostingView<Content: View>: NSHostingView<Content> {
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-private final class FocusHostingController<Content: View>: NSHostingController<Content> {
+final class FocusHostingController<Content: View>: NSHostingController<Content> {
     override func loadView() {
         view = FocusHostingView(rootView: rootView)
     }
 }
 
-private final class FocusModalPanel: NSPanel {
+final class FocusModalPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
@@ -612,21 +608,7 @@ private final class FocusModalPanel: NSPanel {
 @MainActor
 enum PromptPanelPresenter {
     static func run(_ config: PromptPanelConfig) -> PanelResult {
-        let panel = FocusModalPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
-            styleMask: [.titled, .utilityWindow],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.level = .modalPanel
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        // 关键：让 utility 面板能正常成为 key window（默认 becomesKeyOnlyIfNeeded=true 会拒绝键盘焦点，
-        // 导致弹窗里的输入框点进去不显示光标）。
-        panel.becomesKeyOnlyIfNeeded = false
-        panel.worksWhenModal = true
-        panel.isMovableByWindowBackground = true
+        let panel = DialogPanelFactory.makePanel()
 
         let result = PanelResult()
         let dismiss: () -> Void = {
@@ -636,32 +618,15 @@ enum PromptPanelPresenter {
         let root = PracticePromptPanel(config: config, result: result, dismiss: dismiss)
         let controller = FocusHostingController(rootView: root)
         panel.contentViewController = controller
-        let size = controller.view.fittingSize
-        panel.setContentSize(NSSize(width: max(380, min(size.width, 480)), height: max(220, size.height)))
-
-        // 手动居中于主屏幕：窗口尚未上屏时 center() 可能失效，导致面板落在屏幕上方。
-        if let screen = NSScreen.main ?? NSScreen.screens.first {
-            let frame = panel.frame
-            let origin = NSPoint(
-                x: screen.visibleFrame.midX - frame.width / 2,
-                y: screen.visibleFrame.midY - frame.height / 2
-            )
-            panel.setFrameOrigin(origin)
-        }
-
-        // 激活 app：弹窗需要是激活态，SwiftUI 文本框才会真正绘制竖杠光标（否则 key window 不生效、点不出光标）。
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
-        panel.makeKey()   // 确保成为 key window，弹窗输入框第一次点击即有光标
+        // 面板按内容实际高度精确撑开，并锁定尺寸：避免上下留白忽多忽少。
+        controller.view.layoutSubtreeIfNeeded()
+        DialogPanelFactory.present(panel, contentSize: controller.view.fittingSize)
         FocusLogger.info("PromptPanel OPEN — title=\(config.title)")
         NSApp.runModal(for: panel)
 
-        // 提醒弹窗常在「app 不在前台」时由定时器触发。关闭弹窗时 runModal 会把主窗口恢复成 key，
-        // 把它顶到当前 App 前面——这里把主窗口悄悄收到后面，避免「处理完弹窗，主界面自己跳出来」。
-        // 有意的跳转（"暂停一下" -> openPractice -> onOpenMainWindow）会在后续主动呼起主窗口，不受影响。
-        if !NSApp.isActive, let main = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isMainWindow }) {
-            main.orderBack(nil)
-        }
+        // 提醒弹窗常在「app 不在前台」时由定时器触发，关闭时别把主窗口顶到前面来。
+        // 有意的跳转（"暂停一下" -> openPractice -> onOpenMainWindow）会主动呼起主窗口，不受影响。
+        DialogPanelFactory.restoreAfterModal()
 
         FocusLogger.info("PromptPanel CLOSED — title=\(config.title) choice=\(String(describing: result.choice))")
         return result

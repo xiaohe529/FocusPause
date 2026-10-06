@@ -45,31 +45,35 @@ struct FiveSensesView: View {
             }
             .foregroundStyle(Color.focusAccent)
 
-            ForEach(Array(steps.enumerated()), id: \.offset) { _, item in
-                HStack(spacing: 12) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.focusActive.opacity(0.14))
-                            .frame(width: 32, height: 32)
+            VStack(spacing: 0) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: 12) {
                         Image(systemName: item.icon)
-                            .font(.system(size: 15))
-                            .foregroundStyle(Color.focusActive)
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18)
+                        Text(item.prompt)
+                            .font(.subheadline)
+                        Spacer()
                     }
-                    Text(item.prompt)
-                        .font(.subheadline)
-                    Spacer()
+                    .padding(.vertical, 13)
+                    .padding(.horizontal, 14)
+                    .overlay(alignment: .bottom) {
+                        if index < steps.count - 1 {
+                            Rectangle().fill(Color.surfaceDivider).frame(height: 1)
+                        }
+                    }
                 }
-                .focusCard()
             }
+            .focusList()
 
             Button {
                 step = 0
                 started = true
             } label: {
                 Label("开始分步引导", systemImage: "play.fill")
-                    .padding(.vertical, 6)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+            .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
         }
         .padding()
     }
@@ -89,18 +93,13 @@ struct FiveSensesView: View {
                 Spacer()
             }
 
-            ZStack {
-                Circle()
-                    .fill(Color.focusActive.opacity(0.14))
-                    .frame(width: 72, height: 72)
-                Image(systemName: current.icon)
-                    .font(.system(size: 30))
-                    .foregroundStyle(Color.focusActive)
-            }
+            Image(systemName: current.icon)
+                .font(.system(size: 30))
+                .foregroundStyle(.secondary)
 
             Text("\(current.count)")
                 .font(.system(size: 120, weight: .light))
-                .foregroundStyle(Color.focusActive)
+                .foregroundStyle(Color.focusAccent)
                 .monospacedDigit()
 
             Text(current.prompt)
@@ -112,7 +111,7 @@ struct FiveSensesView: View {
             HStack(spacing: 10) {
                 ForEach(0..<steps.count, id: \.self) { i in
                     Circle()
-                        .fill(i == step ? Color.focusActive : Color.secondary.opacity(0.25))
+                        .fill(i == step ? Color.focusAccent : Color.secondary.opacity(0.25))
                         .frame(width: 8, height: 8)
                 }
             }
@@ -126,10 +125,10 @@ struct FiveSensesView: View {
                 }
             } label: {
                 Label(step < steps.count - 1 ? "下一步" : "完成", systemImage: "checkmark")
-                    .padding(.vertical, 6)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusActive))
+            .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
         }
+        .frame(maxWidth: .infinity)
         .padding()
     }
 }

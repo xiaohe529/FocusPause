@@ -40,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Settings window
         let settings = SettingsWindowController()
         settings.setContentView(MainView(state: AppState.shared))
+        settings.installTitlebarTabs(state: AppState.shared)
         settingsController = settings
 
         // 弹窗里的「暂停一下/去呼吸」跳转：呼起主窗口并切到暂停页。
@@ -79,26 +80,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     private func presentUpdateAlert(version: String, downloadURL: URL?) {
-        let alert = NSAlert()
-        alert.messageText = "发现新版本 v\(version)"
-        alert.informativeText = "当前版本 v\(Updater.currentVersion)，是否立即下载更新？"
-        alert.addButton(withTitle: "立即下载")
-        alert.addButton(withTitle: "忽略此版本")
-        alert.addButton(withTitle: "稍后")
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn:
+        // 与主界面同一套弹窗外观（原来用系统 NSAlert，按钮配色不一致）。
+        let choice = NoticeDialogPresenter.run(NoticeDialogView(
+            title: "发现新版本 v\(version)",
+            icon: "arrow.down.circle",
+            message: "当前版本 v\(Updater.currentVersion)，是否立即下载更新？",
+            actions: [
+                .init(title: "稍后") {},
+                .init(title: "忽略此版本") {},
+                .init(title: "立即下载", isPrimary: true) {},
+            ]
+        ))
+        switch choice {
+        case 2:
             guard let downloadURL else { return }
             Task {
                 if let err = await Updater.downloadAndOpen(downloadURL) {
-                    let e = NSAlert()
-                    e.messageText = "下载失败"
-                    e.informativeText = err
-                    e.addButton(withTitle: "知道了")
-                    e.runModal()
+                    NoticeDialogPresenter.run(NoticeDialogView(
+                        title: "下载失败",
+                        icon: "exclamationmark.triangle",
+                        message: err,
+                        actions: [.init(title: "知道了", isPrimary: true) {}]
+                    ))
                 }
             }
-        case .alertSecondButtonReturn:
+        case 1:
             AppState.shared.ignoredUpdateVersion = version
         default:
             break // 稍后

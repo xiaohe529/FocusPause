@@ -11,6 +11,7 @@ struct BlockControlView: View {
             SetupChecklistView(state: state)
                 .padding(.bottom, 12)
 
+            // 三个子页都可自由查看、提前编辑名单；真正的限制在「开启屏蔽」时才生效。
             SubSegmentCard(
                 options: [
                     .init(value: 0, label: "网站屏蔽", icon: "globe"),

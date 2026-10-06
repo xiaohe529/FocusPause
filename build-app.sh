@@ -14,22 +14,28 @@ fi
 
 echo "=== Building FocusPause + Helper ($BUILD_CONFIG) ==="
 
-# Build for both architectures to create universal binaries
-ARCHS=("arm64-apple-macosx" "x86_64-apple-macosx")
-BUILT_BINS=()
+# Build for both architectures to create universal binaries.
+# 注意：新版 swift-build 会把两个 --triple 的产物都写进同一个 `.build/out/Products/<Config>`，
+# 后一次构建会覆盖前一次；旧的 `.build/<triple>/<config>` 硬编码则会拿到上一版工具链留下的
+# 过期二进制（改了源码却"没生效"就是这个原因）。所以每次构建后立刻把产物另存到临时目录。
+STAGE_DIR=".build/universal-stage"
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR"
 
-for ARCH in "${ARCHS[@]}"; do
+for ARCH in arm64-apple-macosx x86_64-apple-macosx; do
+    SHORT="${ARCH%%-*}"
     echo "--- Building for $ARCH ---"
     swift build $SWIFT_FLAGS --triple "$ARCH"
-    BUILT_BINS+=(".build/$ARCH/$BUILD_CONFIG/FocusPause")
-    BUILT_BINS+=(".build/$ARCH/$BUILD_CONFIG/FocusPauseHelper")
+    BIN_DIR="$(swift build $SWIFT_FLAGS --show-bin-path --triple "$ARCH")"
+    cp "$BIN_DIR/FocusPause" "$STAGE_DIR/FocusPause-$SHORT"
+    cp "$BIN_DIR/FocusPauseHelper" "$STAGE_DIR/FocusPauseHelper-$SHORT"
 done
 
 BUNDLE_DIR=".build/FocusPause.app"
-ARM_BIN=".build/arm64-apple-macosx/$BUILD_CONFIG/FocusPause"
-ARM_HELPER=".build/arm64-apple-macosx/$BUILD_CONFIG/FocusPauseHelper"
-X86_BIN=".build/x86_64-apple-macosx/$BUILD_CONFIG/FocusPause"
-X86_HELPER=".build/x86_64-apple-macosx/$BUILD_CONFIG/FocusPauseHelper"
+ARM_BIN="$STAGE_DIR/FocusPause-arm64"
+ARM_HELPER="$STAGE_DIR/FocusPauseHelper-arm64"
+X86_BIN="$STAGE_DIR/FocusPause-x86_64"
+X86_HELPER="$STAGE_DIR/FocusPauseHelper-x86_64"
 
 echo "=== Assembling .app bundle ==="
 rm -rf "$BUNDLE_DIR"
@@ -66,7 +72,7 @@ codesign --force --sign - "$BUNDLE_DIR/Contents/Helpers/com.focuspause.helper" 2
 codesign --force --sign - "$BUNDLE_DIR/Contents/MacOS/FocusPause"
 
 # Also copy helper + plist next to the arm64 executable for dev-mode (command-line) runs
-BUILD_OUT_DIR=".build/arm64-apple-macosx/$BUILD_CONFIG"
+BUILD_OUT_DIR="$(swift build $SWIFT_FLAGS --show-bin-path --triple arm64-apple-macosx)"
 cp BundleResources/com.focuspause.helper.plist "$BUILD_OUT_DIR/com.focuspause.helper.plist"
 
 # Strip Apple Double (._*) files — they corrupt pkg installers

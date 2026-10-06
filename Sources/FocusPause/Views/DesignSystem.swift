@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// 极简冷静风设计系统：统一色板 + 统一卡片样式。
+/// FocusPause 设计系统 —— 参考 magpie 的界面语言。
 ///
-/// 色彩语义（Color Consistency Lock）：
-/// - `focusAccent`（靛蓝）：唯一主色。选中态、主按钮、链接、导航。
-/// - `focusActive`（青绿）：仅表示「正在运行」。计时中横幅、呼吸动画、活跃指示。
-/// - `focusDanger`（红）：仅危险操作。紧急退出、删除、破坏性确认。
-/// - 三个颜色不得交叉使用；新 UI 一律从语义出发选色。
+/// 视觉模型（Magpie 三件套）：
+/// - **底 / 卡 / 线**：灰色页面底 + 白色圆角卡片 + 1px 细线。分组靠「卡片 + 细线」，
+///   而不是把每个元素都填一块底。卡片内用浅一档的细线分隔行。
+/// - **一个强调色**：`focusAccent`（靛蓝）。只有真正的主动作才用实心主色；
+///   导航、列表、状态一律安静（`.primary` / `.secondary` / `.tertiary`）。
+/// - **分段导航**：灰轨道 + 白色选中胶囊（系统分段控件的观感）。
 ///
-/// 圆角系统（Shape Consistency Lock）：控件 8 / 卡片 12 / 弹窗 14，
-/// 通过 `FocusRadius` 使用，禁止裸写其他数值。
+/// 状态提示不靠颜色区分（红黄绿是交通灯，不是调色板），差异由图标形状与文案承担。
+///
+/// 圆角（Shape Consistency Lock）：控件 8 / 卡片 12 / 弹窗 14 / 分段轨道 10（内胶囊 7）。
 enum FocusRadius {
     /// 按钮、输入框、chip、横幅等小控件
     static let control: CGFloat = 8
@@ -19,25 +21,196 @@ enum FocusRadius {
     static let modal: CGFloat = 14
     /// 主导航 Tab 选中态，比卡片更紧凑但比控件更结构化
     static let primarySegment: CGFloat = 10
+    /// 胶囊、圆点等完全圆角元素
+    static let pill: CGFloat = 999
+}
+
+/// 外观主题：跟随系统 / 浅色 / 深色。
+enum AppearanceTheme: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light:  return "浅色"
+        case .dark:   return "深色"
+        }
+    }
+
+    /// 对应的 AppKit 外观；`.system` 用 nil 表示跟随系统。
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+/// 可选的强调色主题（设置里可切换）。默认暖赭。
+enum AccentTheme: String, CaseIterable, Identifiable {
+    case ochre, clay, moss, indigo
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .ochre:  return "暖赭"
+        case .clay:   return "陶土"
+        case .moss:   return "苔绿"
+        case .indigo: return "靛蓝"
+        }
+    }
+
+    /// 浅色 / 深色两档的具体色值（深浅各调一档，保证两种外观下都读得清）。
+    var colors: (light: Color, dark: Color) {
+        switch self {
+        case .ochre:
+            return (Color(red: 0.706, green: 0.388, blue: 0.122),
+                    Color(red: 0.890, green: 0.635, blue: 0.392))
+        case .clay:
+            return (Color(red: 0.706, green: 0.310, blue: 0.231),
+                    Color(red: 0.914, green: 0.557, blue: 0.482))
+        case .moss:
+            return (Color(red: 0.290, green: 0.435, blue: 0.255),
+                    Color(red: 0.588, green: 0.729, blue: 0.518))
+        case .indigo:
+            return (Color(red: 0.286, green: 0.314, blue: 0.667),
+                    Color(red: 0.635, green: 0.663, blue: 0.949))
+        }
+    }
 }
 
 extension Color {
-    /// 沉稳靛蓝：主强调色（开启屏蔽、选中态、主按钮）
-    static let focusAccent = Color(red: 0.42, green: 0.47, blue: 0.72)
-    /// 沉静青绿：屏蔽中/专注中状态
-    static let focusActive = Color(red: 0.30, green: 0.60, blue: 0.55)
-    /// 低饱和红：错误 / 紧急
-    static let focusDanger = Color(red: 0.80, green: 0.35, blue: 0.32)
-    /// 卡片底色（自适应明暗）
-    static let focusCard = Color.secondary.opacity(0.12)
+    /// 当前强调色主题。由 `AppState` 在启动 / 设置变化时写入，默认暖赭。
+    nonisolated(unsafe) static var currentAccentTheme: AccentTheme = .ochre
+
+    /// 唯一强调色：取自当前主题（默认暖赭 / 陶土橙）。
+    /// 为什么默认暖赭：底是中性灰、文字是墨，再配冷色（蓝 / 青）又滑回 AI 模板；
+    /// 暖赭「人味」、和灰墨天然搭，低饱和避免变成廉价暖色 slop。
+    /// 只用在真正的主动作 / 选中态 / 链接 / 运行中图标上。
+    static var focusAccent: Color {
+        let c = currentAccentTheme.colors
+        return Color(light: c.light, dark: c.dark)
+    }
+
+    /// 危险色：停止屏蔽 / 拦截 / 紧急退出这类「破坏性 / 需要三思」的动作。
+    /// 用克制的砖红（不是纯红），和墨、灰搭得住；始终配白字。
+    static let focusDanger = Color(
+        light: Color(red: 0.745, green: 0.227, blue: 0.192),   // #BE3A31
+        dark:  Color(red: 0.824, green: 0.329, blue: 0.290)    // #D2544A
+    )
+
+    /// 高强调墨色：停止 / 确认退出这类要有分量、但不抢暖色的动作。随明暗翻转为近白。
+    static let focusInk = Color(
+        light: Color(red: 0.110, green: 0.110, blue: 0.130),   // #1c1c21
+        dark:  Color(red: 0.929, green: 0.929, blue: 0.945)    // #ededf1
+    )
+
+    /// 主色 / 墨色实心按钮上的文字色：随明暗翻转（浅色底→深字，深色底→浅字）。
+    static let accentFg = Color(
+        light: Color.white,
+        dark:  Color(red: 0.090, green: 0.090, blue: 0.110)    // #17171c
+    )
+
+    /// 兼容旧调用：内容块底色 = 卡片底。
+    static let focusCard = surfaceCard
+
+    /// 页面底（magpie --bg）。
+    static let surfaceCanvas = Color(
+        light: Color(red: 0.957, green: 0.957, blue: 0.965),   // #f4f4f6
+        dark:  Color(red: 0.102, green: 0.102, blue: 0.118)    // #1a1a1e
+    )
+    /// 卡片 / 列表底（magpie --card）。
+    static let surfaceCard = Color(
+        light: Color(red: 1.000, green: 1.000, blue: 1.000),   // #ffffff
+        dark:  Color(red: 0.137, green: 0.137, blue: 0.153)    // #232327
+    )
+    /// 控件 / 分段轨道 / chip 底（magpie --pill）。
+    static let surfaceWell = Color(
+        light: Color(red: 0.945, green: 0.945, blue: 0.957),   // #f1f1f4
+        dark:  Color(red: 0.176, green: 0.176, blue: 0.200)    // #2d2d33
+    )
+    /// 卡片描边（magpie --line）。
+    static let surfaceHairline = Color(
+        light: Color(red: 0.890, green: 0.890, blue: 0.910),   // #e3e3e8
+        dark:  Color(red: 0.200, green: 0.200, blue: 0.224)    // #333339
+    )
+    /// 卡内分隔线，比描边浅一档（magpie --line-2）。
+    static let surfaceDivider = Color(
+        light: Color(red: 0.925, green: 0.925, blue: 0.941),   // #ececf0
+        dark:  Color(red: 0.173, green: 0.173, blue: 0.196)    // #2c2c32
+    )
+
+    /// 用浅色 / 深色两个具体值创建自适应颜色。
+    init(light: Color, dark: Color) {
+        self.init(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(isDark ? dark : light)
+        })
+    }
 }
 
 extension View {
-    /// 统一卡片样式：圆角 10 + 内边距 + 自适应底色。
+    /// 内容块 → 白色圆角卡片 + 1px 细线（magpie 的 `.card`）。
+    /// 分组靠卡片，不再靠填充色块。
     func focusCard(cornerRadius: CGFloat = FocusRadius.card) -> some View {
         self
-            .padding(12)
-            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: cornerRadius))
+            .padding(.vertical, 14)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.surfaceHairline, lineWidth: 1)
+            )
+    }
+
+    /// 列表容器：一整块白卡，行之间用更浅的细线分隔（magpie 的 `.card` + `.row`）。
+    /// 行自己提供内边距，所以这里不额外加 padding，只负责底、边、裁剪。
+    func focusList(cornerRadius: CGFloat = FocusRadius.card) -> some View {
+        self
+            .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.surfaceHairline, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    /// 组内的一行（多行卡片用）：无独立底，只在行底压一条更浅的细线。
+    func focusRow(cornerRadius: CGFloat = FocusRadius.control) -> some View {
+        self.overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.surfaceDivider)
+                .frame(height: 1)
+        }
+    }
+
+    /// 可点击的胶囊 chip（magpie 的 pill）：中性底、无描边；选中用浅主色底 + 主色文字。
+    func focusChip(isSelected: Bool = false, tint: Color = .focusAccent) -> some View {
+        self
+            .background(Capsule().fill(isSelected ? tint.opacity(0.12) : Color.surfaceWell))
+            .foregroundStyle(isSelected ? tint : Color.primary)
+    }
+
+    /// 统一输入框外观：中性底 + 1px 细线。
+    /// 聚焦时**不变色、不加聚焦环**——用户明确不喜欢点击输入框后输入框变色的效果。
+    func focusField(
+        height: CGFloat? = nil,
+        horizontalPadding: CGFloat = 10,
+        verticalPadding: CGFloat = 7,
+        background: Color = .surfaceCard
+    ) -> some View {
+        self
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, height == nil ? verticalPadding : 0)
+            .frame(height: height)
+            .background(background, in: RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
+                    .strokeBorder(Color.surfaceHairline, lineWidth: 1)
+            )
     }
 }
 
@@ -49,14 +222,9 @@ enum InfoBannerStyle {
     case warning
     case danger
 
-    var color: Color {
-        switch self {
-        case .info: return .focusAccent
-        case .success: return .focusActive
-        case .warning: return .orange
-        case .danger: return .focusDanger
-        }
-    }
+    /// 提醒不以颜色区分（红黄绿是交通灯，不是调色板）。
+    /// 差异由图标形状与文案承担；颜色统一走中性墨色。
+    var color: Color { .secondary }
 
     var defaultIcon: String {
         switch self {
@@ -96,10 +264,12 @@ struct SectionCard<Content: View>: View {
                 HStack(spacing: 6) {
                     if let icon {
                         Image(systemName: icon)
-                            .foregroundStyle(Color.focusAccent)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.tertiary)
                     }
                     Text(title)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
                 }
             }
             if let subtitle {
@@ -110,9 +280,7 @@ struct SectionCard<Content: View>: View {
             }
             content()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: FocusRadius.card))
+        .focusCard()
     }
 }
 
@@ -124,12 +292,12 @@ struct DialogHeader: View {
     var subtitle: String? = nil
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
+            // 图标不再包在自身色调的方块里，只保留字形与墨色。
             Image(systemName: icon)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 36, height: 36)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: FocusRadius.control))
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -144,6 +312,101 @@ struct DialogHeader: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
+
+/// 弹窗外壳：白卡 + 1px 描边，内容与底部按钮条作为**兄弟节点**垂直排列。
+///
+/// 关键：按钮条必须参与布局（不能挂在 `.overlay` 上）。挂在 overlay 时内容区不会为它
+/// 让位，按钮会直接压在正文上——这正是之前「停止屏蔽 / 结束休息」等弹窗布局错乱的原因。
+struct DialogShell<Content: View, Secondary: View, Primary: View>: View {
+    var width: CGFloat
+    @ViewBuilder var content: () -> Content
+    @ViewBuilder var secondary: () -> Secondary
+    @ViewBuilder var primary: () -> Primary
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 16) {
+                content()
+            }
+            .padding(.top, 20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 18)
+            .frame(width: width, alignment: .topLeading)
+
+            Rectangle()
+                .fill(Color.surfaceDivider)
+                .frame(height: 1)
+
+            // 次要 + 主按钮并排靠右（macOS 惯例）
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                secondary()
+                primary()
+            }
+            .padding(.top, 14)
+            .padding(.bottom, 16)
+            .padding(.horizontal, 20)
+        }
+        .frame(width: width)
+        .background(Color.surfaceCard, in: RoundedRectangle(cornerRadius: FocusRadius.modal, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FocusRadius.modal, style: .continuous)
+                .strokeBorder(Color.surfaceHairline, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: FocusRadius.modal, style: .continuous))
+    }
+}
+
+/// 冷静期弹窗：实时倒计时 + 大号时间。
+/// 必须用自绘弹窗（sheet）而不是系统 `.alert`——系统弹窗内的 TimelineView 不会重绘。
+struct CooldownDialogView: View {
+    @ObservedObject var state: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        DialogShell(width: 380) {
+            DialogHeader(
+                title: "冷静期内无法解除屏蔽",
+                icon: "lock.clock",
+                tint: .focusAccent,
+                subtitle: "开启屏蔽后的冷静期，是为了给冲动一个缓冲。"
+            )
+
+            // 每秒按当前时钟重算，倒计时逐秒往下走。
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let left = state.coolDownRemaining(at: context.date)
+                VStack(spacing: 4) {
+                    Text(coolDownClockString(left))
+                        .font(.system(size: 44, weight: .light, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                    Text("剩余冷静时间")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            Text("冷静期结束后才能停止屏蔽；如果已经想清楚了，可以等到时间走完再操作。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+        } secondary: {
+            EmptyView()
+        } primary: {
+            Button("知道了") { dismiss() }
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+        }
+    }
+}
+
+/// 把剩余秒数格式化成 mm:ss（分钟可以超过 60）。
+func coolDownClockString(_ remaining: TimeInterval) -> String {
+    let total = max(0, Int(remaining))
+    return String(format: "%02d:%02d", total / 60, total % 60)
 }
 
 /// 统一密码弹窗：自动聚焦、清晰错误反馈，并避免固定高度造成的空白或截断。
@@ -161,13 +424,8 @@ struct PasswordDialogView: View {
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            DialogHeader(
-                title: title,
-                icon: icon,
-                tint: tint,
-                subtitle: subtitle
-            )
+        DialogShell(width: 380) {
+            DialogHeader(title: title, icon: icon, tint: tint, subtitle: subtitle)
 
             if let message {
                 Text(message)
@@ -195,19 +453,13 @@ struct PasswordDialogView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            HStack {
-                Spacer()
-                Button("取消", action: onCancel)
-                    .buttonStyle(.bordered)
-                Button(confirmTitle, action: onSubmit)
-                    .buttonStyle(AlwaysActiveButtonStyle(color: confirmTint))
-            }
-            .padding(.top, 2)
+        } secondary: {
+            Button("取消", action: onCancel)
+                .buttonStyle(AlwaysActiveTintedButtonStyle())
+        } primary: {
+            Button(confirmTitle, action: onSubmit)
+                .buttonStyle(AlwaysActiveButtonStyle(color: confirmTint))
         }
-        .padding(22)
-        .frame(width: 360, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }
 
@@ -215,17 +467,18 @@ struct PasswordDialogView: View {
 struct ConfirmDialogView: View {
     let title: String
     var icon: String = "exclamationmark.triangle.fill"
-    var tint: Color = .focusDanger
+    var tint: Color = .focusAccent
     var message: String
     var details: [String] = []
     var confirmTitle: String
-    var cancelTitle: String = "取消"
-    var confirmTint: Color = .focusDanger
+    /// 传 nil 时只显示确认按钮（用于纯通知类弹窗）。
+    var cancelTitle: String? = "取消"
+    var confirmTint: Color = .focusAccent
     var onConfirm: () -> Void
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        DialogShell(width: 400) {
             DialogHeader(title: title, icon: icon, tint: tint)
 
             Text(message)
@@ -249,21 +502,17 @@ struct ConfirmDialogView: View {
                     }
                 }
                 .padding(10)
-                .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.control))
+                .background(Color.surfaceWell, in: RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
             }
-
-            HStack {
-                Spacer()
+        } secondary: {
+            if let cancelTitle {
                 Button(cancelTitle, action: onCancel)
-                    .buttonStyle(.bordered)
-                Button(confirmTitle, action: onConfirm)
-                    .buttonStyle(AlwaysActiveButtonStyle(color: confirmTint))
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
             }
-            .padding(.top, 2)
+        } primary: {
+            Button(confirmTitle, action: onConfirm)
+                .buttonStyle(AlwaysActiveButtonStyle(color: confirmTint))
         }
-        .padding(22)
-        .frame(width: 380, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }
 
@@ -355,7 +604,7 @@ struct SetupChecklistView: View {
     ) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(done ? Color.focusActive : Color.secondary)
+                .foregroundStyle(done ? Color.focusAccent : Color.secondary)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -415,7 +664,7 @@ struct InfoBanner<Content: View>: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon ?? style.defaultIcon)
-                .foregroundStyle(style.color)
+                .foregroundStyle(.secondary)
             content()
                 .font(contentFont)
             Spacer(minLength: 8)
@@ -423,14 +672,13 @@ struct InfoBanner<Content: View>: View {
                 Button(actionTitle, action: action)
                     .buttonStyle(.plain)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(actionColor ?? style.color)
+                    .foregroundStyle(actionColor ?? Color.focusAccent)
                     .disabled(actionDisabled)
                     .opacity(actionDisabled ? 0.45 : 1)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(style.color.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.control))
+        .padding(.horizontal, 2)
+        .padding(.vertical, 8)
     }
 }
 
@@ -493,10 +741,11 @@ struct MinuteField: View {
 
     var body: some View {
         TextField("", text: $text)
-            .textFieldStyle(.roundedBorder)
+            .textFieldStyle(.plain)
             .multilineTextAlignment(.center)
             .monospacedDigit()
-            .frame(width: width)
+            .frame(width: width - 16)
+            .focusField(height: 24, horizontalPadding: 8, verticalPadding: 0)
             .onChange(of: text) { _, newText in
                 let digits = newText.filter { $0.isNumber }
                 guard let v = Int(digits), v > 0 else { return }
@@ -519,36 +768,85 @@ struct RowActionButtons: View {
     var onDelete: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 2) {
             if let onEdit {
-                Button(action: onEdit) {
-                    Image(systemName: "pencil")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                actionButton("pencil", tint: .secondary, action: onEdit)
             }
             if let moveUp {
-                Button(action: moveUp) {
-                    Image(systemName: "chevron.up")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(!canMoveUp)
+                actionButton("chevron.up", tint: .secondary, disabled: !canMoveUp, action: moveUp)
             }
             if let onDelete {
-                Button(action: onDelete) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.focusDanger)
+                actionButton("trash", tint: .focusInk, action: onDelete)
             }
         }
         .opacity(revealed ? 1 : 0)
         .animation(.easeInOut(duration: 0.12), value: revealed)
     }
+
+    /// 悬停才出现的图标操作：统一 26x22 点击区，避免图标过小难以点中。
+    private func actionButton(
+        _ icon: String,
+        tint: Color,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(disabled ? Color.secondary.opacity(0.4) : tint)
+        .disabled(disabled)
+    }
+}
+
+/// 极简分段控件：只带文字，灰轨道 + 白色选中胶囊（与导航同一套语言）。
+/// 用来替换原生 `.segmented` 选择器——后者在墨色 tint 下会变成一整块黑，很重。
+struct MiniSegmented<T: Hashable>: View {
+    let options: [(value: T, label: String)]
+    @Binding var selection: T
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                let isSelected = selection == option.value
+                Button {
+                    withAnimation(.easeOut(duration: 0.16)) { selection = option.value }
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity)
+                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                        .background(
+                            isSelected ? Color.surfaceCard : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .strokeBorder(isSelected ? Color.surfaceHairline : Color.clear, lineWidth: 1)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color.surfaceWell, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
 }
 
 struct SubSegmentCard<T: Hashable>: View {
+    /// 二级 / 三级导航。刻意**不用**一级导航那套「灰轨道 + 白胶囊」——
+    /// 两级同款会看着重复、分不出层级。这里用更轻的「下划线文字」：
+    /// 无轨道、无填充，靠颜色与一条下划线表示选中。
+    /// `contained`：二级导航，靠左对齐；`plain`：卡片内模式切换，居中。
+    enum Variant { case contained, plain }
+
     struct Option {
         let value: T
         let label: String
@@ -557,39 +855,48 @@ struct SubSegmentCard<T: Hashable>: View {
 
     let options: [Option]
     @Binding var selection: T
+    var variant: Variant = .contained
 
     var body: some View {
-        HStack(spacing: 10) {
+        switch variant {
+        case .contained: row(leading: false)   // 二级导航居中
+        case .plain: row(leading: false)
+        }
+    }
+
+    private func row(leading: Bool) -> some View {
+        HStack(spacing: 18) {   // 文字标签之间留白，而不是挤在一个轨道里
             ForEach(options, id: \.value) { option in
+                let isSelected = selection == option.value
                 Button {
-                    selection = option.value
+                    withAnimation(.easeOut(duration: 0.16)) { selection = option.value }
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: option.icon)
-                            .font(.system(size: 14))
-                        Text(option.label)
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(selection == option.value ? Color.focusAccent : Color.secondary)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 8)
-                    .background(
-                        selection == option.value ? Color.focusAccent.opacity(0.14) : Color.clear,
-                        in: Capsule()
-                    )
-                    .overlay(
-                        Capsule()
-                            .stroke(
-                                selection == option.value ? Color.focusAccent.opacity(0.45) : Color.clear,
-                                lineWidth: 1
-                            )
-                    )
-                    .contentShape(Capsule())
-                    .frame(maxWidth: .infinity)
+                    tabLabel(option, isSelected: isSelected)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(.plain)
             }
         }
+        .frame(maxWidth: .infinity, alignment: leading ? .leading : .center)
+    }
+
+    private func tabLabel(_ option: Option, isSelected: Bool) -> some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: option.icon)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                Text(option.label)
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? Color.focusAccent : Color.secondary)
+
+            // 选中下划线：唯一的状态信号，无填充、无描边。
+            Capsule()
+                .fill(isSelected ? Color.focusAccent : Color.clear)
+                .frame(height: 2)
+        }
+        .padding(.top, 2)
+        .contentShape(Rectangle())
     }
 }
-

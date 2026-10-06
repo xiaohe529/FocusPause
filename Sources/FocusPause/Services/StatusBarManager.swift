@@ -7,19 +7,32 @@ class StatusBarManager: NSObject {
     private weak var state: AppState?
     private weak var settings: SettingsWindowController?
 
+    /// 菜单栏图标：直接用系统的 pause 符号（模板图，自动适配浅色/深色菜单栏）。
+    private static func menuBarSymbol(filled: Bool) -> NSImage? {
+        NSImage(systemSymbolName: filled ? "pause.circle.fill" : "pause.circle",
+                accessibilityDescription: "FocusPause")
+    }
+
+    private func applyMenuBarIcon() {
+        let active = (state?.blockingEnabled == true || state?.isProcessing == true)
+        let img = Self.menuBarSymbol(filled: active)
+            ?? NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "FocusPause")
+        img?.isTemplate = true
+        statusItem?.button?.image = img
+    }
+
     func setup(state: AppState, settings: SettingsWindowController) {
         self.state = state
         self.settings = settings
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "FocusPause")
-        item.button?.image?.isTemplate = true
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
         // Enable both left and right click to trigger the action.
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
         statusItem = item
+        applyMenuBarIcon()
 
         // Auto-update icon when blocking state changes
         state.onBlockingStateChanged = { [weak self] in
@@ -98,10 +111,6 @@ class StatusBarManager: NSObject {
 
     func updateIcon() {
         // 实心 = 屏蔽中/处理中，空心 = 空闲。
-        let name = (state?.blockingEnabled == true || state?.isProcessing == true)
-            ? "pause.circle.fill"
-            : "pause.circle"
-        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "FocusPause")
-        statusItem?.button?.image?.isTemplate = true
+        applyMenuBarIcon()
     }
 }

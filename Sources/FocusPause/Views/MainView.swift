@@ -9,50 +9,28 @@ struct MainView: View {
     @State private var scheduledExitPasswordInput = ""
     @State private var scheduledExitPasswordError = false
     let tabLabels = ["屏蔽吧！", "计时模式", "暂停一下"]
-    let tabIcons = ["shield", "timer", "pause.circle"]
+    let tabIcons = ["lock.fill", "timer", "pause.circle"]
 
     var body: some View {
         VStack(spacing: 0) {
-            // Tab bar — soft segmented style
-            HStack(spacing: 2) {
-                ForEach(0..<tabLabels.count, id: \.self) { i in
-                    Button {
-                        state.selectedTab = i
-                    } label: {
-                        Label(tabLabels[i], systemImage: tabIcons[i])
-                            .font(.body.weight(state.selectedTab == i ? .semibold : .regular))
-                            .padding(.vertical, 7)
-                            .padding(.horizontal, 14)
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 34)
-                            .foregroundStyle(state.selectedTab == i ? .white : .secondary)
-                            .background(
-                                state.selectedTab == i ? Color.focusAccent : Color.clear,
-                                in: RoundedRectangle(cornerRadius: FocusRadius.primarySegment)
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: FocusRadius.primarySegment))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(4)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal)
-            .padding(.top, 14)
-            .padding(.bottom, 10)
-
-            Divider()
+            // 一级导航：标题栏下移到窗口顶部，居中的实心胶囊分段（比二级的下划线更重）。
+            // 设置只在标题栏齿轮里，这里不重复。
+            // 顶部留白多一点：不要贴着标题栏那条线，整条导航才有「落下来」的感觉。
+            primaryTabs
+                .padding(.top, 22)
+                .padding(.bottom, 14)
 
             // Content — each tab manages its own scrolling
             Group {
                 switch state.selectedTab {
                 case 0: BlockControlView(state: state)
                 case 1: FocusTimerView(state: state)
+                case 3: SettingsView(state: state)
                 default: PauseView(state: state)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
             .padding(.top, 4)
 
             // Status banners
@@ -66,7 +44,7 @@ struct MainView: View {
                     }
                 } else if state.focusTimerActive {
                     if state.isElapsedFocus {
-                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "结束", actionColor: .focusDanger) {
+                        InfoBanner(style: .success, icon: "lock.fill", actionTitle: "结束", actionColor: .focusInk) {
                             TimelineView(.periodic(from: .now, by: 1)) { context in
                                 Text("正计时中 · 已用时 \(elapsedString(context.date, start: state.focusTimerStart))")
                                     .monospacedDigit()
@@ -115,14 +93,18 @@ struct MainView: View {
                     } action: { state.lastError = nil }
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
 
             // Bottom control bar (full-width bar, bottom margin only)
             controlBar
                 .padding(.top, 8)
                 .padding(.bottom, 16)
         }
-        .frame(minWidth: 500, minHeight: 500, alignment: .top)
+        .frame(minWidth: 680, minHeight: 560, alignment: .top)
+        .background(Color.surfaceCanvas)
+        // 让原生开关 / 分段控件 / 强调按钮统一采用靛蓝主色，而不是系统蓝。
+        .tint(Color.focusAccent)
         .sheet(isPresented: $state.showPasswordSheet, onDismiss: {
             passwordInput = ""
             passwordError = false
@@ -150,7 +132,12 @@ struct MainView: View {
             )
         }
         .sheet(isPresented: $state.showSettingsSheet) {
-            SettingsView(state: state)
+            EmptyView()
+                .frame(width: 1, height: 1)
+                .onAppear {
+                    state.showSettingsSheet = false
+                    state.selectedTab = 3
+                }
         }
         .sheet(isPresented: $state.showEndElapsedConfirmation) {
             ConfirmDialogView(
@@ -211,18 +198,67 @@ struct MainView: View {
                 }
             )
         }
-        .alert("冷静期内无法解除屏蔽", isPresented: $state.showCooldownAlert) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                Text("冷静期剩余 \(coolDownString(state.coolDownRemaining))，结束后才能停止屏蔽。")
+        // 用自绘弹窗而不是系统 .alert：系统弹窗里的 TimelineView 不会重绘，
+        // 倒计时会卡在打开那一刻不动。
+        .sheet(isPresented: $state.showCooldownAlert) {
+            CooldownDialogView(state: state)
+        }
+        // 与其他弹窗统一：自绘 DialogShell（白卡 + 主题色按钮），不用系统 .alert
+        // （系统弹窗的默认按钮在无窗口 key 时会是灰/黑色，与其余 UI 不一致）。
+        .sheet(isPresented: $state.showEmergencyQuotaAlert) {
+            ConfirmDialogView(
+                title: "紧急退出次数已用完",
+                icon: "exclamationmark.triangle.fill",
+                tint: .focusAccent,
+                message: state.emergencyQuotaAlertMessage,
+                confirmTitle: "知道了",
+                cancelTitle: nil
+            ) {
+                state.showEmergencyQuotaAlert = false
+            } onCancel: {
+                state.showEmergencyQuotaAlert = false
             }
         }
-        .alert("紧急退出次数已用完", isPresented: $state.showEmergencyQuotaAlert) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            Text(state.emergencyQuotaAlertMessage)
+    }
+
+    // MARK: - 一级导航
+
+    /// 一级导航：居中的实心胶囊分段（比二级更重）。
+    /// 设置入口只在标题栏（`TitlebarTabsView` 的齿轮），这里不再重复。
+    private var primaryTabs: some View {
+        // 标题之间疏开：只在项与项之间留白，胶囊本身尺寸不变，读起来更松弛。
+        HStack(spacing: 20) {
+            ForEach(0..<tabLabels.count, id: \.self) { i in
+                primaryTabButton(i)
+            }
         }
+        .fixedSize()
+    }
+
+    private func primaryTabButton(_ i: Int) -> some View {
+        let isSelected = state.selectedTab == i
+        return Button {
+            withAnimation(.easeOut(duration: 0.16)) { state.selectedTab = i }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: tabIcons[i])
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
+                Text(tabLabels[i])
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .fixedSize()
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .frame(height: 30)
+            // 选中 = 强调色实心胶囊（一级导航的重音），未选 = 安静的次要文字。
+            .foregroundStyle(isSelected ? Color.accentFg : Color.secondary)
+            .background(
+                isSelected ? Color.focusAccent : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var passwordDialogTitle: String {
@@ -286,10 +322,15 @@ struct MainView: View {
 
     private var controlBar: some View {
         HStack(spacing: 12) {
-            Image(systemName: state.blockingEnabled ? "lock.shield.fill" : "lock.shield")
-                .font(.system(size: 20))
-                .foregroundStyle(state.blockingEnabled ? Color.focusActive : Color.secondary)
-                .frame(width: 24)
+            // 状态徽标：圆角方块 + 锁形图标（比裸露的 lock.shield 更精致、更像一个「状态点」）。
+            Image(systemName: state.blockingEnabled ? "lock.fill" : "lock.open.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(state.blockingEnabled ? Color.focusAccent : Color.secondary)
+                .frame(width: 30, height: 30)
+                .background(
+                    (state.blockingEnabled ? Color.focusAccent.opacity(0.14) : Color.surfaceWell),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
 
             if state.isProcessing {
                 ProgressView().controlSize(.small)
@@ -320,17 +361,16 @@ struct MainView: View {
             .buttonStyle(AlwaysActiveButtonStyle(color: controlButtonColor))
             .disabled(state.isProcessing)
 
-            Button(action: { state.showSettingsSheet = true }) {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(AlwaysActiveBorderlessStyle())
-            .help("设置")
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 18)
         .padding(.vertical, 16)
-        .frame(maxWidth: .infinity, minHeight: 56)
-        .overlay(alignment: .top) { Divider() }
-        .background(Color.secondary.opacity(0.07))
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.surfaceHairline)
+                .frame(height: 1)
+        }
+        .background(Color.surfaceCanvas)
     }
 
     /// 延时屏蔽倒计时期间，主按钮变为「立即屏蔽」。
@@ -340,8 +380,9 @@ struct MainView: View {
     }
 
     private var controlButtonColor: Color {
-        if state.delayedBlockActive { return .focusActive }
-        return state.blockingEnabled ? .focusDanger : .focusAccent
+        // 「立即屏蔽」是紧急动作 → 砖红；「开启 / 停止屏蔽」都是常规操作 → 主题色。
+        if state.delayedBlockActive { return .focusDanger }
+        return .focusAccent
     }
 
     private var listLockedBadge: some View {
@@ -381,4 +422,12 @@ private func coolDownString(_ remaining: TimeInterval) -> String {
     let mins = total / 60
     let secs = total % 60
     return String(format: "%02d:%02d", mins, secs)
+}
+
+extension AppState {
+    /// 冷静期剩余（相对某个时刻），用于倒计时弹窗的实时显示。
+    func coolDownRemaining(at date: Date) -> TimeInterval {
+        guard let end = coolDownEndsAt else { return 0 }
+        return max(0, end.timeIntervalSince(date))
+    }
 }

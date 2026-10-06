@@ -5,12 +5,29 @@ import SwiftUI
 /// 右侧一小块保留给关闭按钮，其余区域直接交给系统拖拽会话。
 private final class GoalOverlayPanel: NSPanel {
     private let closeButtonZone: CGFloat = 44
+    /// 右键菜单里的「打开 FocusPause」。
+    var onOpen: (() -> Void)?
+    /// 右键菜单里的「关闭悬浮窗」。
+    var onClose: (() -> Void)?
 
     override func sendEvent(_ event: NSEvent) {
+        // 右键（含 Control + 左键）弹菜单。左键一律只做拖动——
+        // 「拖动」本身也是从一次鼠标按下开始的，靠位移去区分点击/拖动并不可靠，
+        // 干脆不再把左键点击当作「打开主界面」。
+        if event.type == .rightMouseDown {
+            showContextMenu(at: event)
+            return
+        }
+
         guard event.type == .leftMouseDown,
               let contentView,
               contentView.frame.contains(event.locationInWindow) else {
             super.sendEvent(event)
+            return
+        }
+
+        if event.modifierFlags.contains(.control) {
+            showContextMenu(at: event)
             return
         }
 
@@ -23,10 +40,31 @@ private final class GoalOverlayPanel: NSPanel {
 
         if closeButtonRect.contains(event.locationInWindow) {
             super.sendEvent(event)
-        } else {
-            performDrag(with: event)
+            return
         }
+
+        performDrag(with: event)   // 同步阻塞，直到系统拖拽会话结束
     }
+
+    private func showContextMenu(at event: NSEvent) {
+        let menu = NSMenu()
+
+        let open = NSMenuItem(title: "打开 FocusPause", action: #selector(openMainWindow), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+
+        if onClose != nil {
+            let close = NSMenuItem(title: "关闭悬浮窗", action: #selector(closeOverlay), keyEquivalent: "")
+            close.target = self
+            menu.addItem(close)
+        }
+
+        let point = contentView?.convert(event.locationInWindow, from: nil) ?? .zero
+        menu.popUp(positioning: nil, at: point, in: contentView)
+    }
+
+    @objc private func openMainWindow() { onOpen?() }
+    @objc private func closeOverlay() { onClose?() }
 }
 
 @MainActor
@@ -76,8 +114,16 @@ final class GoalOverlayController: NSWindowController {
             let origin = NSPoint(x: frame.minX + 24, y: frame.maxY - size.height - 24)
             window?.setFrame(NSRect(origin: origin, size: size), display: true)
         }
+        let panel = window as? GoalOverlayPanel
+        panel?.onOpen = { [weak self] in
+            self?.onOpenRequest?()
+        }
+        panel?.onClose = onClose
         window?.orderFrontRegardless()
     }
+
+    /// 右键菜单里选「打开 FocusPause」时的回调，由 AppState 设为「呼起主窗口」。
+    var onOpenRequest: (() -> Void)?
 
     func hide() {
         window?.orderOut(nil)
@@ -93,11 +139,9 @@ struct GoalOverlayView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color.focusAccent)
-                .frame(width: 4)
+            // 悬浮窗不设左侧色条：状态靠图标与文字，浮层本身已经从背景中分离出来。
             Image(systemName: title == "休息中" ? "cup.and.saucer.fill" : "target")
-                .font(.system(size: 26, weight: .semibold))
+                .font(.system(size: 22, weight: .medium))
                 .foregroundStyle(Color.focusAccent)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
@@ -108,13 +152,13 @@ struct GoalOverlayView: View {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text("剩余 \(countdownString(at: context.date, end: end))")
                                 .font(.caption.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(Color.focusDanger)
+                                .foregroundStyle(Color.focusInk)
                         }
                     } else if let elapsedStart {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             Text("已 \(elapsedString(context.date, start: elapsedStart))")
                                 .font(.caption.monospacedDigit().weight(.semibold))
-                                .foregroundStyle(Color.focusDanger)
+                                .foregroundStyle(Color.focusInk)
                         }
                     }
                 }
@@ -137,10 +181,10 @@ struct GoalOverlayView: View {
             }
         }
         .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.focusAccent.opacity(0.6), lineWidth: 1.5)
+            RoundedRectangle(cornerRadius: FocusRadius.modal, style: .continuous)
+                .strokeBorder(Color.surfaceHairline, lineWidth: 1)
         )
     }
 

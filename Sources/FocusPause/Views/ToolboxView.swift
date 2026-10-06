@@ -68,7 +68,7 @@ struct ToolboxView: View {
                             .font(.subheadline)
                             .padding(.vertical, 4)
                     }
-                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                    .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
                     .fixedSize()
                     Spacer()
                 }
@@ -122,7 +122,7 @@ struct ToolboxView: View {
                     .font(.subheadline)
                     .padding(.vertical, 3)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+            .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
             .fixedSize()
         }
         .focusCard()
@@ -168,7 +168,7 @@ struct ToolboxView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .focusRow()
         .onHover { inside in
             hoveringLinkID = inside ? link.id : (hoveringLinkID == link.id ? nil : hoveringLinkID)
         }
@@ -181,21 +181,22 @@ struct ToolboxView: View {
             Text(item.linkID == nil ? "新增条目" : "编辑条目")
                 .font(.headline)
 
-            Picker("类型", selection: $draftKind) {
-                Text("网站链接").tag(ToolboxLink.Kind.link)
-                Text("本机应用").tag(ToolboxLink.Kind.app)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 220)
+            MiniSegmented(
+                options: [(ToolboxLink.Kind.link, "网站链接"), (ToolboxLink.Kind.app, "本机应用")],
+                selection: $draftKind
+            )
+            .frame(width: 240)
 
             TextField("名称（如：去暂停工具箱 / 日历）", text: $draftTitle)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .focusField()
                 .frame(width: 280)
                 .focused($titleFocus)
 
             if draftKind == .app {
                 TextField("应用路径（如 /Applications/…/….app）", text: $draftURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .focusField()
                     .frame(width: 280)
                 Button {
                     showAppPicker = true
@@ -203,28 +204,32 @@ struct ToolboxView: View {
                     Label("从已安装 App 中选择", systemImage: "list.bullet")
                         .font(.subheadline)
                 }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                .buttonStyle(AlwaysActiveTintedButtonStyle(color: .focusAccent))
                 .fixedSize()
             } else {
                 TextField("链接地址", text: $draftURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .focusField()
                     .frame(width: 280)
             }
 
             HStack(spacing: 16) {
-                Button("取消") { editing = nil }
+                Spacer(minLength: 0)
                 if item.linkID != nil {
-                    Button("删除", role: .destructive) {
+                    Button {
                         state.deleteToolboxLink(groupID: item.groupID, linkID: item.linkID!)
                         editing = nil
+                    } label: {
+                        Text("删除")
                     }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
                 }
-                Button("保存") {
-                    saveLink(item)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || draftURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("取消") { editing = nil }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
+                Button("保存") { saveLink(item) }
+                    .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
+                    .disabled(draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                              || draftURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding()
@@ -279,7 +284,7 @@ struct ToolboxView: View {
                                 }
                                 .padding(.vertical, 5)
                                 .padding(.horizontal, 8)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                                .focusRow()
                             }
                             .buttonStyle(.plain)
                         }
@@ -317,11 +322,14 @@ struct ToolboxView: View {
             Text(item.isNew ? "新增分组" : "分组名称")
                 .font(.headline)
             TextField("分组名", text: $draftGroupName)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .focusField()
                 .frame(width: 220)
                 .focused($titleFocus)
-            HStack(spacing: 16) {
+            HStack(spacing: 10) {
+                Spacer(minLength: 8)
                 Button("取消") { renamingGroup = nil }
+                    .buttonStyle(AlwaysActiveTintedButtonStyle())
                 Button("保存") {
                     if let groupID = item.groupID {
                         state.renameToolboxGroup(id: groupID, name: draftGroupName)
@@ -330,7 +338,7 @@ struct ToolboxView: View {
                     }
                     renamingGroup = nil
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(AlwaysActiveButtonStyle(color: .focusAccent))
                 .disabled(draftGroupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }

@@ -3,8 +3,9 @@ import AppKit
 
 // MARK: - Shared dialog field chrome
 
-/// Matches the visual geometry of SwiftUI's `.roundedBorder` text fields while
-/// allowing AppKit-backed fields below to own first responder/caret behavior.
+/// 统一的输入框外观：中性底 + 细线，聚焦时不再描边变色
+/// （用户明确不喜欢点击输入框后输入框变色的效果）。
+/// 只保留一层极轻的聚焦底色，让「能不能打字」这件事仍然看得见。
 private struct DialogFieldChrome: ViewModifier {
     var isFocused: Bool
     var height: CGFloat
@@ -13,16 +14,14 @@ private struct DialogFieldChrome: ViewModifier {
         content
             .padding(.horizontal, 7)
             .frame(height: height, alignment: .center)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(
+                isFocused ? Color.surfaceWell : Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
+            )
             .clipShape(RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
-                    .strokeBorder(
-                        isFocused
-                            ? Color(nsColor: .controlAccentColor)
-                            : Color.secondary.opacity(0.28),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(Color.secondary.opacity(0.28), lineWidth: 1)
             }
             .animation(.easeOut(duration: 0.12), value: isFocused)
     }
@@ -36,16 +35,14 @@ private struct DialogTextEditorChrome: ViewModifier {
             .padding(.horizontal, 7)
             .padding(.vertical, 5)
             .frame(height: 64, alignment: .topLeading)
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(
+                isFocused ? Color.surfaceWell : Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
+            )
             .clipShape(RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: FocusRadius.control, style: .continuous)
-                    .strokeBorder(
-                        isFocused
-                            ? Color(nsColor: .controlAccentColor)
-                            : Color.secondary.opacity(0.28),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(Color.secondary.opacity(0.28), lineWidth: 1)
             }
             .animation(.easeOut(duration: 0.12), value: isFocused)
     }

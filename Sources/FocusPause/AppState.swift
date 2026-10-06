@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import SwiftUI
 import FocusPauseHelperShared
 import ApplicationServices
 import ServiceManagement
@@ -72,6 +73,16 @@ class AppState: ObservableObject {
     @Published var remindCountdownManualEnd = true
     @Published var remindRestManualEnd = true
     @Published var restLockScreen = false
+
+    /// 强调色主题（设置里可切换）。变化时同步到 `Color.currentAccentTheme`。
+    @Published var accentTheme: AccentTheme = .ochre {
+        didSet { Color.currentAccentTheme = accentTheme }
+    }
+
+    /// 外观主题（跟随系统 / 浅色 / 深色），变化时立刻作用到整个 App。
+    @Published var appearanceTheme: AppearanceTheme = .system {
+        didSet { NSApp.appearance = appearanceTheme.nsAppearance }
+    }
     @Published var showCooldownAlert = false
     @Published var remindBlockingNoFocus = false
     @Published var blockingNoFocusIntervalMinutes = 30
@@ -144,6 +155,13 @@ class AppState: ObservableObject {
     let focusTimerEngine = FocusTimerEngine()
     let restTimerEngine = FocusTimerEngine()
     private let goalOverlay = GoalOverlayController()
+
+    /// 悬浮窗左键只做拖动；右键菜单里选「打开 FocusPause」才呼起主窗口。
+    private func wireGoalOverlayActions() {
+        goalOverlay.onOpenRequest = { [weak self] in
+            self?.onOpenMainWindow?()
+        }
+    }
     private var goalOverlayDismissedByUser = false
 
     /// 专注计时「紧急退出」每月额度（用户可设 1–5，默认 3；每月仅可改一次）。
@@ -163,7 +181,7 @@ class AppState: ObservableObject {
     func setEmergencyQuota(_ value: Int) -> Bool {
         let month = Self.currentMonthString()
         if lastEmergencyQuotaSetMonth == month {
-            lastError = "本月已设置过专注紧急退出额度，下个月才能再改"
+            presentNotice("额度本月已锁定", "专注紧急退出额度本月已经设置过，下个月才能再改。")
             return false
         }
         emergencyQuota = min(5, max(1, value))
@@ -179,7 +197,7 @@ class AppState: ObservableObject {
     func setScheduledExitQuota(_ value: Int) -> Bool {
         let month = Self.currentMonthString()
         if lastScheduledQuotaSetMonth == month {
-            lastError = "本月已设置过定时屏蔽退出额度，下个月才能再改"
+            presentNotice("额度本月已锁定", "定时屏蔽紧急退出额度本月已经设置过，下个月才能再改。")
             return false
         }
         scheduledExitQuota = min(5, max(1, value))
@@ -194,12 +212,36 @@ class AppState: ObservableObject {
 
     var isLocked: Bool { focusTimerActive || restActive }
 
+    /// 弹一个提示框。用于「用户点了某个按钮、但当前状态不允许」这类拒绝，
+    /// 比底部条幅更容易被看到（条幅会被忽略，用户以为点了没反应）。
+    /// 用自绘面板直接弹，不走主窗口的 sheet：这些提示经常由菜单栏或
+    /// 屏蔽中的列表操作触发，走 sheet 就得先把主窗口叫出来，
+    /// 用户会看到「主界面自己冒出来」。面板自己居中，处理完就还原现场。
+    /// 表单内的校验错误（如域名格式、密码错误）仍然走 `lastError` 就近显示。
+    func presentNotice(_ title: String, _ message: String) {
+        NoticeDialogPresenter.run(NoticeDialogView(
+            title: title,
+            icon: "exclamationmark.triangle",
+            message: message,
+            actions: [.init(title: "知道了", isPrimary: true) {}]
+        ))
+    }
+
     /// 屏蔽名单处于锁定状态（休息 / 专注计时 / 屏蔽开启中）时返回提示文案，否则 nil。
     func ruleListLockedError() -> String? {
         if restActive { return "休息中，屏蔽名单已锁定，无法删除条目" }
         if focusTimerActive { return "专注计时中，屏蔽名单已锁定，无法删除条目" }
         if blockingEnabled { return "屏蔽开启中，屏蔽名单已锁定，无法删除条目" }
         return nil
+    }
+
+    /// 名单锁定时用弹窗打断：条幅容易被忽略，删除/关闭这类操作需要用户明确看到被拒绝的原因。
+    func presentRuleListLockedNotice() {
+        presentNotice(
+            "屏蔽名单已锁定",
+            (ruleListLockedError() ?? "当前状态下无法修改屏蔽名单")
+                + "。名单只能增加，不能减少；需要改动请先停止屏蔽或结束计时。"
+        )
     }
 
     // MARK: - 定时屏蔽（多段时间段：每天重复 / 一次性）
@@ -275,6 +317,7 @@ class AppState: ObservableObject {
     }
 
     func load() {
+        wireGoalOverlayActions()
         FocusLogger.info("AppState load begin")
 
         migrateLegacyDefaultsIfNeeded()
@@ -377,6 +420,14 @@ class AppState: ObservableObject {
         remindCountdownManualEnd = settings.bool(.remindCountdownManualEnd, default: true)
         remindRestManualEnd = settings.bool(.remindRestManualEnd, default: true)
         restLockScreen = settings.bool(.restLockScreen)
+        if let raw = settings.string(.accentTheme), let theme = AccentTheme(rawValue: raw) {
+            accentTheme = theme
+        }
+        Color.currentAccentTheme = accentTheme
+        if let raw = settings.string(.appearanceTheme), let theme = AppearanceTheme(rawValue: raw) {
+            appearanceTheme = theme
+        }
+        NSApp.appearance = appearanceTheme.nsAppearance
         breakGlassEnabled = settings.bool(.breakGlassEnabled)
 
         loadPrompts()
@@ -541,15 +592,15 @@ class AppState: ObservableObject {
 
     func startFocusTimer(minutes: Int, goal: String? = nil) {
         guard !restActive else {
-            lastError = "休息中，结束后再开始专注"
+            presentNotice("休息中", "请先结束休息，再开始专注。")
             return
         }
         guard !delayedBlockActive else {
-            lastError = "延时屏蔽进行中，无法启动专注计时"
+            presentNotice("延时屏蔽进行中", "延时屏蔽倒计时结束、正式开启屏蔽后才能启动专注计时。")
             return
         }
         guard blockingEnabled else {
-            lastError = "请先开启屏蔽再启动专注计时"
+            presentNotice("需要先开启屏蔽", "专注计时会锁定屏蔽设置，所以要先开启屏蔽。")
             return
         }
         guard focusTimerStart == nil else { return }   // 正计时进行中，不叠计
@@ -573,19 +624,19 @@ class AppState: ObservableObject {
     /// 开始「正计时」：无结束时间、向上计时。结束需密码且不消耗紧急退出额度。
     func startFocusTimerElapsed(goal: String? = nil) {
         guard !restActive else {
-            lastError = "休息中，结束后再开始专注"
+            presentNotice("休息中", "请先结束休息，再开始专注。")
             return
         }
         guard !delayedBlockActive else {
-            lastError = "延时屏蔽进行中，无法启动专注计时"
+            presentNotice("延时屏蔽进行中", "延时屏蔽倒计时结束、正式开启屏蔽后才能启动专注计时。")
             return
         }
         guard blockingEnabled else {
-            lastError = "请先开启屏蔽再启动专注计时"
+            presentNotice("需要先开启屏蔽", "专注计时会锁定屏蔽设置，所以要先开启屏蔽。")
             return
         }
         guard !focusTimerActive else {
-            lastError = "已有专注计时进行中"
+            presentNotice("已有专注计时", "当前已有专注计时在运行，先结束它再开始新的。")
             return
         }
         cancelAllNudges()
@@ -700,7 +751,7 @@ class AppState: ObservableObject {
             return false
         }
         guard scheduledExitUsesThisMonth < scheduledExitQuota else {
-            lastError = "本月定时屏蔽紧急退出次数已用完"
+            presentNotice("次数已用完", "本月定时屏蔽紧急退出次数已用完，请等到时间段结束。")
             FocusLogger.error("Scheduled exit rejected: quota exhausted (\(scheduledExitUsesThisMonth)/\(scheduledExitQuota))")
             return false
         }
@@ -1115,15 +1166,15 @@ class AppState: ObservableObject {
 
     func startDelayedBlock(minutes: Int, goal: String? = nil) {
         guard !restActive else {
-            lastError = "休息中，结束后再开始延时屏蔽"
+            presentNotice("休息中", "请先结束休息，再设置延时屏蔽。")
             return
         }
         guard !blockingEnabled else {
-            lastError = "屏蔽已开启，无需延时屏蔽"
+            presentNotice("屏蔽已开启", "屏蔽已经在运行，不需要再设置延时屏蔽。")
             return
         }
         guard !focusTimerActive else {
-            lastError = "专注计时进行中，无法启动延时屏蔽"
+            presentNotice("专注计时中", "专注计时期间无法启动延时屏蔽。")
             return
         }
         guard !delayedBlockActive else { return }
@@ -1151,11 +1202,11 @@ class AppState: ObservableObject {
         guard !restActive else { return }
         guard minutes > 0 else { return }
         guard blockingEnabled else {
-            lastError = "请先开启屏蔽再休息"
+            presentNotice("需要先开启屏蔽", "休息会保持屏蔽状态，所以要先开启屏蔽。")
             return
         }
         guard !focusTimerActive else {
-            lastError = "专注计时进行中，结束后再休息"
+            presentNotice("专注计时中", "先结束当前专注计时，再开始休息。")
             return
         }
         cancelAllNudges()
@@ -1166,6 +1217,8 @@ class AppState: ObservableObject {
         restEnd = Date().addingTimeInterval(TimeInterval(minutes * 60))
         restGoal = event?.isEmpty == true ? nil : event
         restMinutes = minutes
+        // 休息开始时重置「用户已手动关闭浮窗」标记，保证休息一定有浮窗。
+        goalOverlayDismissedByUser = false
         restTimerEngine.onExpire = { [weak self] in
             Task { @MainActor in self?.restExpired() }
         }
@@ -1337,7 +1390,7 @@ class AppState: ObservableObject {
                 actionItems: actionPrompts.filter { $0.text != "暂停一下" },
                 textItems: textPrompts,
                 primaryTitle: "立即屏蔽",
-                primaryTint: .focusActive,
+                primaryTint: .focusAccent,
                 primaryHint: "不需要延长？",
                 durationConfirmTitle: "确认延长",
                 showPause: false
@@ -1394,7 +1447,7 @@ class AppState: ObservableObject {
     func requestCancelDelayedBlock() {
         guard delayedBlockActive else { return }
         guard hasPassword else {
-            lastError = "请先设置屏蔽密码，再取消延时计时"
+            presentNotice("需要先设置屏蔽密码", "取消延时计时需要通过密码验证，请先在设置里设置屏蔽密码。")
             showSettingsSheet = true
             return
         }
@@ -1601,7 +1654,7 @@ class AppState: ObservableObject {
 
     func setPassword(_ password: String) {
         guard !isLocked else {
-            lastError = "专注计时中，无法修改密码"
+            presentNotice("专注计时中", "专注计时期间无法修改屏蔽密码。")
             return
         }
         do {
@@ -1617,7 +1670,7 @@ class AppState: ObservableObject {
     /// Verify password before changing to new one
     func changePassword(oldPassword: String, newPassword: String) {
         guard !isLocked else {
-            lastError = "专注计时中，无法修改密码"
+            presentNotice("专注计时中", "专注计时期间无法修改屏蔽密码。")
             return
         }
         guard KeychainPassword.verify(oldPassword) else { return }
@@ -1629,15 +1682,21 @@ class AppState: ObservableObject {
         if (!helperInstalled || helperNeedsRepair) && !helperInstallAttempted {
             helperInstallAttempted = true
 
-            // Show explanation before the admin prompt
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.icon = NSImage(systemSymbolName: "lock.shield", accessibilityDescription: nil)
-            alert.messageText = "需要一次性授权"
-            alert.informativeText = "FocusPause 需要安装后台助手来静默更新屏蔽规则，避免每次操作都弹出密码框。\n\n这只需授权一次，之后所有屏蔽操作都会在后台静默执行。\n\n点击「好」后将弹出系统密码输入框。"
-            alert.addButton(withTitle: "好")
-            alert.addButton(withTitle: "取消")
-            if alert.runModal() == .alertFirstButtonReturn {
+            // 与其它弹窗共用同一套外观（DialogShell 白卡 + 主题色按钮），不再用系统 NSAlert。
+            let choice = NoticeDialogPresenter.run(NoticeDialogView(
+                title: "需要一次性授权",
+                icon: "lock.shield",
+                message: "FocusPause 需要安装后台助手来静默更新屏蔽规则。",
+                highlights: [
+                    "这只需授权一次，之后所有屏蔽操作都会在后台静默执行。",
+                    "点击「好」后会弹出系统密码输入框。",
+                ],
+                actions: [
+                    .init(title: "取消") {},
+                    .init(title: "好", isPrimary: true) {},
+                ]
+            ))
+            if choice == 1 {
                 isInstallingHelper = true
                 let ok = await HelperInstaller.install()
                 if ok {
@@ -1713,15 +1772,15 @@ class AppState: ObservableObject {
 
     func disableBlocking() async {
         guard !restActive else {
-            lastError = "休息中，请先结束休息再解除屏蔽"
+            presentNotice("休息中", "请先结束休息，再解除屏蔽。")
             return
         }
         guard coolDownRemaining <= 0 else {
-            lastError = "冷静期内无法解除屏蔽，剩余 \(Int(coolDownRemaining) / 60) 分 \(Int(coolDownRemaining) % 60) 秒"
+            presentNotice("冷静期中", "冷静期内无法解除屏蔽，剩余 \(Int(coolDownRemaining) / 60) 分 \(Int(coolDownRemaining) % 60) 秒。")
             return
         }
         guard !isScheduledLockActive else {
-            lastError = "定时屏蔽中，请先结束定时屏蔽（密码）或等到点解除硬锁"
+            presentNotice("定时屏蔽中", "请先在「计时模式 → 定时屏蔽」页面紧急退出，或等到时间段结束。")
             return
         }
         FocusLogger.info("disableBlocking")
@@ -1756,7 +1815,10 @@ class AppState: ObservableObject {
         }
         // 定时屏蔽硬锁窗口内：点停止 → 只提示，退出需到「计时模式 → 定时屏蔽」页走紧急退出。
         if blockingEnabled && isScheduledLockActive {
-            lastError = "定时屏蔽中，请在「计时模式 → 定时屏蔽」页面使用紧急退出"
+            presentNotice(
+                "定时屏蔽进行中",
+                "当前时间段内屏蔽已锁定。要提前结束，请到「计时模式 → 定时屏蔽」页面使用紧急退出。"
+            )
             return
         }
         if delayedBlockActive {
@@ -1764,7 +1826,12 @@ class AppState: ObservableObject {
             return
         }
         guard !isLocked else {
-            lastError = restActive ? "休息中，请先结束休息再修改屏蔽状态" : "专注计时中，无法修改屏蔽状态"
+            presentNotice(
+                restActive ? "休息中" : "专注计时中",
+                restActive
+                    ? "休息期间屏蔽已锁定，请先结束休息再修改屏蔽状态。"
+                    : "专注计时期间屏蔽已锁定，需结束计时或紧急退出后才能修改。"
+            )
             return
         }
         if blockingEnabled {
@@ -1776,15 +1843,21 @@ class AppState: ObservableObject {
                 showPasswordSheet = true
             }
         } else if !hasPassword {
-            // Proactively remind user to set a password before enabling blocking
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.icon = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
-            alert.messageText = "建议设置屏蔽密码"
-            alert.informativeText = "你还没有设置密码。没有密码的话，任何人点击「停止屏蔽」都可以直接关闭，之前忍住的冲动可能一秒破功。\n\n建议现在设置，给关闭屏蔽增加一点操作摩擦。"
-            alert.addButton(withTitle: "设置密码")
-            alert.addButton(withTitle: "稍后再说")
-            if alert.runModal() == .alertFirstButtonReturn {
+            // 与其它弹窗统一外观的自绘提示（原来用 NSAlert，按钮配色和主界面不一致）。
+            let choice = NoticeDialogPresenter.run(NoticeDialogView(
+                title: "建议设置屏蔽密码",
+                icon: "key.fill",
+                message: "你还没有设置密码。没有密码的话，任何人点「停止屏蔽」都能直接关闭。",
+                highlights: [
+                    "建议现在设置，给关闭屏蔽增加一点操作摩擦。",
+                    "也可以稍后再说，先在「设置 → 密码」里补上。",
+                ],
+                actions: [
+                    .init(title: "稍后再说") {},
+                    .init(title: "设置密码", isPrimary: true) {},
+                ]
+            ))
+            if choice == 1 {
                 showSettingsSheet = true
                 return
             }
@@ -1931,6 +2004,16 @@ class AppState: ObservableObject {
         settings.set(enabled, for: .restLockScreen)
     }
 
+    func setAccentTheme(_ theme: AccentTheme) {
+        accentTheme = theme
+        settings.set(theme.rawValue, for: .accentTheme)
+    }
+
+    func setAppearanceTheme(_ theme: AppearanceTheme) {
+        appearanceTheme = theme
+        settings.set(theme.rawValue, for: .appearanceTheme)
+    }
+
     func setRemindFocusTimerAfterBlock(_ enabled: Bool) {
         remindFocusTimerAfterBlock = enabled
         settings.set(enabled, for: .remindFocusTimerAfterBlock)
@@ -2052,7 +2135,7 @@ class AppState: ObservableObject {
             actionItems: actionPrompts,
             textItems: textPrompts,
             primaryTitle: "立即屏蔽",
-            primaryTint: .focusActive,
+            primaryTint: .focusAccent,
             primaryHint: "不需要延时？",
             durationConfirmTitle: "延时屏蔽计时",
             secondaryTitle: "取消",
@@ -2172,130 +2255,6 @@ class AppState: ObservableObject {
 
     // MARK: - 屏蔽后 / 解除后提醒
 
-    /// The choice from a `durationAlert`, resolved against its button list.
-    private enum DurationChoice {
-        case prefix(Int)       // 0-based index into leading buttons
-        case preset(Int)       // 0-based index into preset buttons
-        case custom(minutes: Int)  // the custom button; minutes 0 if unparseable
-        case extra(Int)        // 0-based index into trailing buttons
-    }
-
-    /// Alert with optional goal + custom-minutes fields and duration buttons.
-    /// Button order: prefix, presets, [customButtonTitle], extras.
-    private func durationAlert(
-        title: String,
-        message: String,
-        goalPlaceholder: String?,
-        style: NSAlert.Style = .informational,
-        icon: String? = nil,
-        prefix: [String] = [],
-        presets: [(String, Int)],
-        customButtonTitle: String? = nil,
-        extras: [String] = []
-    ) -> (choice: DurationChoice, goal: String) {
-        let alert = NSAlert()
-        alert.alertStyle = style
-        if let icon {
-            alert.icon = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
-        }
-        alert.messageText = title
-        alert.informativeText = message
-
-        let goalField: NSTextField? = goalPlaceholder.map { placeholder in
-            let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-            f.placeholderString = placeholder
-            return f
-        }
-        var minutesField: NSTextField?
-        var confirmButton: NSButton?
-        if customButtonTitle != nil {
-            // Goal (optional) on top, then a "自定义 [ ] 分钟 [确定]" row below.
-            let container = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-            var y: CGFloat = 0
-            if let goalField {
-                goalField.frame.origin.y = y
-                container.addSubview(goalField)
-                y += 30
-            }
-            let label = NSTextField(labelWithString: "自定义")
-            label.font = .systemFont(ofSize: 12)
-            label.textColor = .secondaryLabelColor
-            label.frame = NSRect(x: 0, y: y + 1, width: 52, height: 22)
-            container.addSubview(label)
-            minutesField = NSTextField(frame: NSRect(x: 56, y: y, width: 40, height: 24))
-            minutesField?.alignment = .right
-            container.addSubview(minutesField!)
-            let unitLabel = NSTextField(labelWithString: "分钟")
-            unitLabel.font = .systemFont(ofSize: 12)
-            unitLabel.textColor = .secondaryLabelColor
-            unitLabel.frame = NSRect(x: 100, y: y + 1, width: 40, height: 22)
-            container.addSubview(unitLabel)
-            confirmButton = NSButton(title: "确定", target: nil, action: nil)
-            confirmButton?.controlSize = .small
-            confirmButton?.font = .systemFont(ofSize: 11)
-            confirmButton?.frame = NSRect(x: 144, y: y, width: 44, height: 22)
-            container.addSubview(confirmButton!)
-            y += 30
-            container.frame.size.height = y
-            alert.accessoryView = container
-        } else if let goalField {
-            goalField.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-            alert.accessoryView = goalField
-        }
-
-        var buttons: [String] = prefix
-        buttons += presets.map { $0.0 }
-        if let customButtonTitle { buttons.append(customButtonTitle) }
-        buttons += extras
-        buttons.forEach { alert.addButton(withTitle: $0) }
-
-        // The custom entry is confirmed via the 确定 button or by pressing Return
-        // inside the minutes field — both click a hidden "自定义" button so runModal
-        // reports the custom choice.
-        if let minutesField, customButtonTitle != nil {
-            let customIndex = prefix.count + presets.count
-            if customIndex < alert.buttons.count {
-                let customButton = alert.buttons[customIndex]
-                customButton.isHidden = true
-                minutesField.target = customButton
-                minutesField.action = #selector(NSButton.performClick(_:))
-                confirmButton?.target = customButton
-                confirmButton?.action = #selector(NSButton.performClick(_:))
-            }
-        }
-
-        // Focus the first input (goal, else minutes) once the modal window exists,
-        // so the blinking caret is visible without needing a click.
-        if let initialField = goalField ?? minutesField {
-            let focusTimer = Timer(timeInterval: 0.1, repeats: false) { [weak alert] _ in
-                MainActor.assumeIsolated {
-                    _ = alert?.window.makeFirstResponder(initialField)
-                }
-            }
-            RunLoop.main.add(focusTimer, forMode: .modalPanel)
-        }
-
-        let idx = Int(alert.runModal().rawValue) - 1000
-        let goal = goalField?.stringValue ?? ""
-        let customMinutes = minutesField.map {
-            Int($0.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
-        } ?? 0
-
-        let p = prefix.count
-        let c = presets.count
-        let customOffset = customButtonTitle == nil ? 0 : 1
-        let choice: DurationChoice
-        if idx < p {
-            choice = .prefix(idx)
-        } else if idx < p + c {
-            choice = .preset(idx - p)
-        } else if customButtonTitle != nil && idx == p + c {
-            choice = .custom(minutes: customMinutes)
-        } else {
-            choice = .extra(idx - p - c - customOffset)
-        }
-        return (choice, goal)
-    }
 
     // MARK: - 专注计时结束后继续提醒
 

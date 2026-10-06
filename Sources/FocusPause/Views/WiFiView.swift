@@ -33,11 +33,11 @@ struct WiFiView: View {
             PasswordDialogView(
                 title: "恢复网络",
                 icon: "wifi",
-                tint: .focusActive,
+                tint: .focusAccent,
                 subtitle: "网络拦截当前已开启",
                 message: "确认后 FocusPause 会立即恢复系统 DNS 设置。",
                 confirmTitle: "恢复网络",
-                confirmTint: .focusActive,
+                confirmTint: .focusAccent,
                 errorMessage: passwordError ? "密码错误，请重试" : nil,
                 password: $passwordInput,
                 onSubmit: verifyAndEnableWiFi,
@@ -49,13 +49,21 @@ struct WiFiView: View {
                 title: "确认拦截网络？",
                 icon: "wifi.slash",
                 tint: .focusDanger,
-                message: "专注计时中拦截后，直到计时结束都无法恢复网络。",
-                details: [
-                    "DNS 会立即改为无效地址，网页和应用无法访问。",
-                    "计时结束后不会自动恢复网络，可凭密码手动恢复。"
-                ],
+                message: state.isLocked
+                    ? "专注计时中拦截后，直到计时结束都无法恢复网络。"
+                    : "拦截会让本机无法上网，需要时再凭密码恢复。",
+                details: state.isLocked
+                    ? [
+                        "DNS 会立即改为无效地址，网页和应用无法访问。",
+                        "计时结束后不会自动恢复网络，可凭密码手动恢复。"
+                      ]
+                    : [
+                        "DNS 会立即改为无效地址，网页和应用无法访问。",
+                        "局域网不受影响；恢复时需输入屏蔽密码。"
+                      ],
                 confirmTitle: "确认拦截",
-                cancelTitle: "暂不拦截"
+                cancelTitle: "暂不拦截",
+                confirmTint: .focusDanger
             ) {
                 showBlockConfirm = false
                 Task { await state.wifiBlocker.toggle() }
@@ -68,14 +76,12 @@ struct WiFiView: View {
 
     private var statusHero: some View {
         HStack(spacing: 16) {
+            // 图标就是一个图标：不再套一层自身色调的圆角方块（图鉴 #25），
+            // 状态由图标形状与文字承担，颜色只做次要强调。
             Image(systemName: state.wifiDisabled ? "network.slash" : "network")
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(state.wifiDisabled ? Color.focusActive : Color.focusAccent)
-                .frame(width: 48, height: 48)
-                .background(
-                    (state.wifiDisabled ? Color.focusActive : Color.focusAccent).opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 14)
-                )
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(Color.focusAccent)
+                .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(state.wifiDisabled ? "网络已拦截" : "网络正常")
@@ -99,12 +105,14 @@ struct WiFiView: View {
                 )
                 .frame(minWidth: 86, minHeight: 30)
             }
-            .buttonStyle(AlwaysActiveButtonStyle(color: state.wifiDisabled ? .focusActive : .focusDanger))
+            .buttonStyle(AlwaysActiveButtonStyle(color: state.wifiDisabled ? .focusAccent : .focusDanger))
             .disabled(state.wifiBlocker.isProcessing)
             .help(state.wifiDisabled ? "恢复网络" : "拦截网络")
         }
-        .padding(16)
-        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: FocusRadius.card))
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Color.surfaceHairline).frame(height: 1)
+        }
     }
 
     private var detailsCard: some View {
@@ -169,18 +177,16 @@ struct WiFiView: View {
     private func handleToggle() {
         // 专注计时中：可拦截网络，但禁止恢复
         if state.isLocked && state.wifiDisabled {
-            state.lastError = "专注计时中，无法恢复网络。计时结束后才能恢复。"
+            state.presentNotice("专注计时中", "计时期间无法恢复网络，需等计时结束后凭密码恢复。")
             return
         }
         if state.wifiDisabled {
             passwordInput = ""
             passwordError = false
             showPasswordPrompt = true
-        } else if state.isLocked {
-            // 专注计时中拦截：提醒拦截后无法恢复
-            showBlockConfirm = true
         } else {
-            Task { await state.wifiBlocker.toggle() }
+            // 拦截网络会改系统 DNS、影响面较大：无论是否在专注计时，都先弹窗确认。
+            showBlockConfirm = true
         }
     }
 
@@ -193,7 +199,7 @@ struct WiFiView: View {
     private func verifyAndEnableWiFi() {
         if state.isLocked && state.wifiDisabled {
             closePasswordPrompt()
-            state.lastError = "专注计时中，无法恢复网络。计时结束后才能恢复。"
+            state.presentNotice("专注计时中", "计时期间无法恢复网络，需等计时结束后凭密码恢复。")
             return
         }
         if KeychainPassword.verify(passwordInput) {

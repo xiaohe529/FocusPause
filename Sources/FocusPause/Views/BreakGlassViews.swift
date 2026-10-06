@@ -3,7 +3,7 @@ import SwiftUI
 struct BreakGlassDialogView: View {
     let title: String
     var icon: String = "lock.open.rotation"
-    var tint: Color = .focusDanger
+    var tint: Color = .focusAccent
     var message: String
     var requiresPassword: Bool = false
     var requiresConfirmationPhrase: Bool = false
@@ -16,12 +16,8 @@ struct BreakGlassDialogView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            DialogHeader(
-                title: title,
-                icon: icon,
-                tint: tint
-            )
+        DialogShell(width: 400) {
+            DialogHeader(title: title, icon: icon, tint: tint)
 
             Text(message)
                 .font(.caption)
@@ -63,24 +59,18 @@ struct BreakGlassDialogView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-
-            HStack {
-                Spacer()
-                Button("取消") { dismiss() }
-                    .buttonStyle(.bordered)
-                Button(submitTitle) {
-                    if let failureMessage = onSubmit(password, confirmationPhrase) {
-                        errorMessage = failureMessage
-                    } else {
-                        dismiss()
-                    }
+        } secondary: {
+            Button("取消") { dismiss() }
+                .buttonStyle(AlwaysActiveTintedButtonStyle())
+        } primary: {
+            Button(submitTitle) {
+                if let failureMessage = onSubmit(password, confirmationPhrase) {
+                    errorMessage = failureMessage
+                } else {
+                    dismiss()
                 }
-                .buttonStyle(AlwaysActiveButtonStyle(color: tint))
             }
-            .padding(.top, 2)
+            .buttonStyle(AlwaysActiveButtonStyle(color: tint))
         }
-        .padding(22)
-        .frame(width: 380, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: FocusRadius.modal))
     }
 }
