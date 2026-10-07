@@ -27,14 +27,14 @@ Focus&Pause 是一款 macOS 专注力守护工具：在你需要专注时屏蔽�
 从 [GitHub Releases](https://github.com/xiaohe529/FocusPause/releases) 或 [Gitee Releases](https://gitee.com/xiaohe529/FocusPause/releases) 下载最新的 `FocusPause-v*.dmg`。
 
 1. 双击 DMG 文件。
-2. 在安装窗口中，把左侧的 **Focus&Pause** 拖到右侧的 **Applications** 文件夹（应用显示名为 Focus&Pause，文件名仍是 `FocusPause.app`）。
-3. 拖完后推出 DMG，打开 `/Applications/FocusPause.app`。
+2. 在安装窗口中，把左侧的 **Focus&Pause** 拖到右侧的 **Applications** 文件夹。
+3. 拖完后推出 DMG，打开 `/Applications/Focus&Pause.app`。
 4. 首次开启屏蔽时，按提示授权安装后台助手；之后屏蔽操作会静默执行。
 
 由于 App 当前未签名，macOS 可能提示“无法验证开发者”。请先点击 **取消**，然后打开
 **系统设置 → 隐私与安全性**，在底部点击 **仍要打开**。
 
-> 如仍被拦截，可在终端执行 `xattr -cr /Applications/FocusPause.app` 后重新打开。
+> 如仍被拦截，可在终端执行 `xattr -cr /Applications/Focus&Pause.app` 后重新打开。
 
 ## 从源码构建
 
@@ -44,7 +44,7 @@ git clone https://github.com/xiaohe529/FocusPause.git
 git clone https://gitee.com/xiaohe529/FocusPause.git
 cd FocusPause
 ./build-app.sh release
-open .build/FocusPause.app
+open ".build/Focus&Pause.app"
 ```
 
 要求：macOS 14+，Xcode 16+ 或完整 Xcode 工具链；支持 Apple Silicon 和 Intel。
@@ -65,7 +65,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
 ## 架构
 
 ```text
-FocusPause.app
+Focus&Pause.app
 ├── FocusPause              # 主应用：SwiftUI、状态管理、屏蔽调度
 ├── FocusPauseHelper        # 后台 helper：hosts 写入与 DNS 设置
 └── FocusPauseHelperShared  # XPC 协议、域名归一化与共享校验
@@ -80,13 +80,13 @@ helper 通过 LaunchDaemon 安装到系统目录，主 App 与 helper 使用 XPC
 ./make-release.sh 2.0.2
 ```
 
-如需构建 DMG，可在 `.build/FocusPause.app` 就绪后执行：
+如需构建 DMG，可在 `.build/Focus&Pause.app` 就绪后执行：
 
 ```bash
 create-dmg --volname "FocusPause" --background dmg-background.png \
   --window-size 660 400 --icon-size 128 \
-  --icon "FocusPause.app" 165 200 --app-drop-link 495 200 \
-  --no-internet-enable FocusPause-v2.0.2.dmg .build/FocusPause.app
+  --icon "Focus&Pause.app" 165 200 --app-drop-link 495 200 \
+  --no-internet-enable FocusPause-v2.0.3.dmg ".build/Focus&Pause.app"
 ```
 
 ## 安全与隐私

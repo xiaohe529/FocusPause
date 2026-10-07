@@ -22,9 +22,9 @@ swift build                  # 验证编译
 ./make-release.sh <版本号>    # 生成 zip（如 ./make-release.sh 1.0.0）
 create-dmg --volname "FocusPause" --background dmg-background.png \
   --window-size 660 400 --icon-size 128 \
-  --icon "FocusPause.app" 165 200 --app-drop-link 495 200 \
-  --no-internet-enable FocusPause-v1.0.0.dmg .build/FocusPause.app
-# 重打包前：pkill -f "FocusPause.app/Contents/MacOS/FocusPause"
+  --icon "Focus&Pause.app" 165 200 --app-drop-link 495 200 \
+  --no-internet-enable FocusPause-v1.0.0.dmg ".build/Focus&Pause.app"
+# 重打包前：pkill -f "Focus&Pause.app/Contents/MacOS/FocusPause"
 ```
 
 ## 本期目标（在现有功能上加「正念 + 休息」）
@@ -75,7 +75,7 @@ create-dmg --volname "FocusPause" --background dmg-background.png \
 
 - 背景是 `dmg-background.png`（1320×800 px @144 DPI，即 660×400 pt），由
   `make-dmg-background.swift` 生成（文字 + 弧形手绘箭头 + 留白）。
-  **背景里不放 logo**——`FocusPause.app` 的图标由 Finder 自己画。
+  **背景里不放 logo**——`Focus&Pause.app` 的图标由 Finder 自己画。
 - 重新生成：
   ```bash
   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift make-dmg-background.swift

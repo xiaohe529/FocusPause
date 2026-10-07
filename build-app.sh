@@ -31,7 +31,8 @@ for ARCH in arm64-apple-macosx x86_64-apple-macosx; do
     cp "$BIN_DIR/FocusPauseHelper" "$STAGE_DIR/FocusPauseHelper-$SHORT"
 done
 
-BUNDLE_DIR=".build/FocusPause.app"
+# Finder/桌面显示的是 .app **文件名**，不是 CFBundleName，所以文件名必须带 &。
+BUNDLE_DIR=".build/Focus&Pause.app"
 ARM_BIN="$STAGE_DIR/FocusPause-arm64"
 ARM_HELPER="$STAGE_DIR/FocusPauseHelper-arm64"
 X86_BIN="$STAGE_DIR/FocusPause-x86_64"

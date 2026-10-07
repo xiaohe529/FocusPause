@@ -448,8 +448,8 @@ struct AppListView: View {
             }
         }
 
-        // 这里按**目录里的文件名**匹配，而 bundle 文件名仍是 `FocusPause.app`
-        // （改名会破坏自动更新与 helper 路径），所以两个名字都要排除。
+        // 这里按**目录里的文件名**匹配。bundle 文件名现在是 `Focus&Pause.app`，
+        // 但老版本装出来的是 `FocusPause.app`，两个名字都要排除。
         let exclusions = Set(["FocusPause", "Focus&Pause", "Finder", "System Settings", "System Preferences", "登录窗口"])
         let filtered = names.filter { !exclusions.contains($0) }.sorted()
         FocusLogger.info("Installed app scan: found \(filtered.count) apps")

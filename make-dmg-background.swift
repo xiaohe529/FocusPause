@@ -5,11 +5,11 @@ import Foundation
 ///
 /// 为什么要有这个脚本：背景是现画的一张图（文字 + 弧形箭头 + 留白），
 /// 手改 PNG 没法跟着文案走，所以这里用代码合成，文案一改重跑即可。
-/// 背景里**不放 logo**—— Finder 会画 `FocusPause.app` 自己的图标。
+/// 背景里**不放 logo**—— Finder 会画 `Focus&Pause.app` 自己的图标。
 ///
 /// 布局必须和 `create-dmg` 的图标坐标对齐（Finder 用**左上角原点**）：
 ///   --window-size 660 400 --icon-size 128
-///   --icon "FocusPause.app" 165 200  --app-drop-link 495 200
+///   --icon "Focus&Pause.app" 165 200  --app-drop-link 495 200
 /// 即两个图标中心在 (165,200) 和 (495,200) —— 背景里那块位置要留空给 Finder 画。
 ///
 /// 生成：

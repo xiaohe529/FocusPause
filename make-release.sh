@@ -3,8 +3,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-APP_DIR=".build/FocusPause.app"
-APP_NAME="FocusPause"
+APP_DIR=".build/Focus&Pause.app"
+# app 文件名跟显示名一致（Finder 显示文件名）；发布产物名保持 FocusPause-vX.Y.Z
+APP_NAME="Focus&Pause"
+ASSET_STEM="FocusPause"
 
 # ---- ensure .app exists ----
 if [ ! -d "$APP_DIR" ]; then
@@ -13,7 +15,7 @@ if [ ! -d "$APP_DIR" ]; then
 fi
 
 VERSION="${1:-1.0.0}"
-ZIP_FILE="${APP_NAME}-v${VERSION}.zip"
+ZIP_FILE="${ASSET_STEM}-v${VERSION}.zip"
 
 echo "=== Creating zip: ${ZIP_FILE} ==="
 
