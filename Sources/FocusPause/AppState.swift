@@ -141,6 +141,11 @@ class AppState: ObservableObject {
     }
     private func endReminderModal() { reminderModalInFlight = false }
 
+    /// 仅供测试：模拟「当前有提醒弹窗正在显示」。
+    func setReminderModalInFlightForTesting(_ inFlight: Bool) {
+        reminderModalInFlight = inFlight
+    }
+
     /// Remaining cooldown after blocking was enabled; 0 when no cooldown is active.
     var coolDownRemaining: TimeInterval {
         guard let end = coolDownEndsAt else { return 0 }
@@ -218,13 +223,20 @@ class AppState: ObservableObject {
     /// 屏蔽中的列表操作触发，走 sheet 就得先把主窗口叫出来，
     /// 用户会看到「主界面自己冒出来」。面板自己居中，处理完就还原现场。
     /// 表单内的校验错误（如域名格式、密码错误）仍然走 `lastError` 就近显示。
+    ///
+    /// 必须推迟一个 runloop turn：调用点几乎都在 SwiftUI `Button` 的 action 里，
+    /// 手势栈尚未退出时直接 `NSApp.runModal` 会开启嵌套事件循环接管 runloop，
+    /// 弹窗里的点击永远送不到按钮上——表现为「弹窗出现了但点了没反应」，
+    /// 主线程 100% 卡在 `runModal` 里，整个 App 看起来是卡死的。
     func presentNotice(_ title: String, _ message: String) {
-        NoticeDialogPresenter.run(NoticeDialogView(
-            title: title,
-            icon: "exclamationmark.triangle",
-            message: message,
-            actions: [.init(title: "知道了", isPrimary: true) {}]
-        ))
+        DialogPanelFactory.runDeferred {
+            NoticeDialogPresenter.run(NoticeDialogView(
+                title: title,
+                icon: "exclamationmark.triangle",
+                message: message,
+                actions: [.init(title: "知道了", isPrimary: true) {}]
+            ))
+        }
     }
 
     /// 屏蔽名单处于锁定状态（休息 / 专注计时 / 屏蔽开启中）时返回提示文案，否则 nil。
@@ -1535,6 +1547,15 @@ class AppState: ObservableObject {
     /// Pop the global NSAlert immediately. Modal — blocks main thread until user responds.
     /// After dismissal, if still pending, schedules a 30s re-pop.
     func presentExtendAlert() {
+        // 有一个调用点在 SwiftUI `Button` 的 action 里（FocusTimerView 的「立即打开弹窗」），
+        // 手势栈未退出时弹模态会锁死 runloop。统一推迟一个 turn。
+        DialogPanelFactory.runDeferred { [weak self] in
+            self?.performPresentExtendAlert()
+        }
+    }
+
+    /// `presentExtendAlert` 的真正实现。已保证不在 SwiftUI 手势栈里执行。
+    private func performPresentExtendAlert() {
         guard delayedBlockPendingAuth else { return }
         guard !pendingAlertInFlight else { return }
         pendingAlertInFlight = true
@@ -1809,6 +1830,16 @@ class AppState: ObservableObject {
     }
 
     func toggleBlocking() {
+        // 4 个调用点里有 4 个是 SwiftUI `Button` 的 action。手势栈未退出时弹模态会锁死
+        // runloop（详见 presentNotice 的注释），所以整个流程推迟一个 runloop turn。
+        // 菜单栏右键那条调用路径本来就在 AppKit 事件里，推迟一 turn 也没有副作用。
+        DialogPanelFactory.runDeferred { [weak self] in
+            self?.performToggleBlocking()
+        }
+    }
+
+    /// `toggleBlocking` 的真正实现。已保证不在 SwiftUI 手势栈里执行。
+    private func performToggleBlocking() {
         guard coolDownRemaining <= 0 else {
             showCooldownAlert = true
             return
@@ -2078,16 +2109,19 @@ class AppState: ObservableObject {
             interval: TimeInterval(reminderIntervalMinutes * 60),
             // 抽取前，长睡后的第二次检查漏了 delayedBlockPendingAuth，导致「屏蔽未生效」
             // 的授权重试弹窗在屏时可能又弹一个「未屏蔽提醒」。两处检查现已统一为同一条件。
-            shouldRun: { [weak self] in
-                guard let self else { return false }
-                return self.reminderEnabled
-                    && !self.blockingEnabled
-                    && !self.focusTimerActive
-                    && !self.delayedBlockActive
-                    && !self.delayedBlockPendingAuth
-            },
+            shouldRun: { [weak self] in self?.reminderLoopShouldRun ?? false },
             action: { [weak self] in self?.presentReminderAlert() }
         )
+    }
+
+    /// 「未屏蔽提醒」循环的触发条件。长睡前后必须是同一组条件，且要给其它提醒弹窗让位。
+    var reminderLoopShouldRun: Bool {
+        reminderEnabled
+            && !blockingEnabled
+            && !focusTimerActive
+            && !delayedBlockActive
+            && !delayedBlockPendingAuth
+            && !reminderModalInFlight
     }
 
     private func stopReminderLoop() {
@@ -2175,19 +2209,25 @@ class AppState: ObservableObject {
         guard remindBlockingNoFocus else { return }
         blockingNoFocusTask = startConditionalPolling(
             interval: TimeInterval(blockingNoFocusIntervalMinutes * 60),
-            shouldRun: { [weak self] in
-                guard let self else { return false }
-                // 只在「屏蔽中且无专注计时」时计时
-                return self.remindBlockingNoFocus
-                    && self.blockingEnabled
-                    && !self.restActive
-                    && !self.focusTimerActive
-                    && !self.delayedBlockActive
-                    && !self.delayedBlockPendingAuth
-                    && !self.isFocusEndNagging
-            },
+            shouldRun: { [weak self] in self?.blockingNoFocusLoopShouldRun ?? false },
             action: { [weak self] in self?.presentBlockingNoFocusAlert() }
         )
+    }
+
+    /// 「已屏蔽未专注」循环的触发条件。
+    ///
+    /// `reminderModalInFlight` 这条不能少：之前只挡了专注结束那一类。上一个提醒弹窗
+    /// 关闭时闸已释放，轮询醒来条件又全部满足，于是紧跟着再弹一个，两个弹窗叠在一起
+    /// ——主线程卡在嵌套 `runModal` 里，界面看起来就是彻底卡死。
+    var blockingNoFocusLoopShouldRun: Bool {
+        remindBlockingNoFocus
+            && blockingEnabled
+            && !restActive
+            && !focusTimerActive
+            && !delayedBlockActive
+            && !delayedBlockPendingAuth
+            && !isFocusEndNagging
+            && !reminderModalInFlight
     }
 
     private func stopBlockingNoFocusLoop() {

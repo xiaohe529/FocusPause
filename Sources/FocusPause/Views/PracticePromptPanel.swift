@@ -608,6 +608,12 @@ final class FocusModalPanel: NSPanel {
 @MainActor
 enum PromptPanelPresenter {
     static func run(_ config: PromptPanelConfig) -> PanelResult {
+        // 重入保护：已有弹窗在跑就不再叠一个。嵌套 runModal 会锁死事件循环，
+        // 症状是「弹窗出来了但点不动」，用户只能强杀进程。
+        guard !DialogPanelFactory.modalInFlight else {
+            FocusLogger.error("PromptPanel suppressed — another modal is already up")
+            return PanelResult()
+        }
         let panel = DialogPanelFactory.makePanel()
 
         let result = PanelResult()

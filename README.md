@@ -77,7 +77,7 @@ helper 通过 LaunchDaemon 安装到系统目录，主 App 与 helper 使用 XPC
 
 ```bash
 ./build-app.sh release
-./make-release.sh 2.0
+./make-release.sh 2.0.1
 ```
 
 如需构建 DMG，可在 `.build/FocusPause.app` 就绪后执行：
@@ -86,7 +86,7 @@ helper 通过 LaunchDaemon 安装到系统目录，主 App 与 helper 使用 XPC
 create-dmg --volname "FocusPause" --background dmg-background.png \
   --window-size 660 400 --icon-size 128 \
   --icon "FocusPause.app" 165 200 --app-drop-link 495 200 \
-  --no-internet-enable FocusPause-v2.0.dmg .build/FocusPause.app
+  --no-internet-enable FocusPause-v2.0.1.dmg .build/FocusPause.app
 ```
 
 ## 安全与隐私

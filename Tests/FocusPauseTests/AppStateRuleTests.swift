@@ -121,21 +121,29 @@ struct AppStateTimerPersistenceTests {
 /// 检查漏了 delayedBlockPendingAuth，会在「屏蔽未生效」的重试弹窗期间抢弹窗。
 @MainActor
 struct AppStateReminderLoopConditionTests {
-    private func reminderLoopShouldRun(_ appState: AppState) -> Bool {
-        appState.reminderEnabled
-            && !appState.blockingEnabled
-            && !appState.focusTimerActive
-            && !appState.delayedBlockActive
-            && !appState.delayedBlockPendingAuth
-    }
-
     @Test
     func pendingAuthBlocksTheReminderRegardlessOfWhenChecked() {
         let appState = AppState()
         appState.reminderEnabled = true
-        #expect(reminderLoopShouldRun(appState))
 
         appState.delayedBlockPendingAuth = true
-        #expect(!reminderLoopShouldRun(appState), "授权待重试期间不得弹出未屏蔽提醒")
+        #expect(!appState.reminderLoopShouldRun, "授权待重试期间不得弹出未屏蔽提醒")
+    }
+
+    @Test
+    func blockingNoFocusLoopYieldsWhileAnotherReminderIsUp() {
+        let appState = AppState()
+        appState.remindBlockingNoFocus = true
+        appState.blockingEnabled = true
+        #expect(appState.blockingNoFocusLoopShouldRun)
+
+        // 另一个提醒弹窗正在显示时必须让位，否则上一个刚关、下一个紧接着弹，
+        // 两个模态叠在一起 → 主线程卡在嵌套 runModal，界面彻底卡死。
+        appState.setReminderModalInFlightForTesting(true)
+        #expect(!appState.blockingNoFocusLoopShouldRun,
+                "已有提醒弹窗在显示时，「已屏蔽未专注」不得再弹")
+
+        appState.setReminderModalInFlightForTesting(false)
+        #expect(appState.blockingNoFocusLoopShouldRun)
     }
 }

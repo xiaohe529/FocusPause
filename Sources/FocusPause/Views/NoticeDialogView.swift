@@ -15,6 +15,27 @@ enum DialogPanelFactory {
     /// 单个变量会被内层弹窗覆盖，外层关闭时就会把现场还原错。
     private static var priorStates: [PriorState] = []
 
+    /// 当前是否已有模态面板在跑。
+    ///
+    /// 为什么需要：`NSApp.runModal` 在模态循环里再调一次会**嵌套事件循环**，内层面板
+    /// 抢走 runloop，外层手势事件永远收不到 mouse-up，表现就是「弹窗出来了但点了没反应」。
+    /// 这里做重入保护，第二个弹窗直接不弹，避免把界面彻底锁死。
+    private static var isModalActive = false
+
+    /// 是否已有弹窗在展示中。调用方据此决定「要不要弹」，而不是弹了才发现。
+    static var modalInFlight: Bool { isModalActive }
+
+    /// 把「启动模态弹窗」推迟到下一个 runloop turn。
+    ///
+    /// 这是 SwiftUI `Button` 手势回调里弹窗的**必要条件**：手势栈尚未退出时直接
+    /// `runModal`，嵌套事件循环会立刻接管 runloop，按钮手势收不到完整事件序列
+    /// （mouse-up → gesture 结束 → action 派发），弹窗里的点击永远送不到按钮上。
+    /// 推迟一个 turn，等手势栈完全退出后再启动模态循环。
+    /// 只适用于「结果可丢弃」的弹窗（返回值无意义），需要取结果的地方不能包。
+    static func runDeferred(_ start: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { start() }
+    }
+
     static func makePanel() -> FocusModalPanel {
         let panel = FocusModalPanel(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
@@ -39,6 +60,7 @@ enum DialogPanelFactory {
 
     /// 按内容实际高度精确撑开并锁定尺寸，然后居中于主屏幕。
     static func present(_ panel: FocusModalPanel, contentSize: NSSize) {
+        isModalActive = true
         let size = NSSize(width: max(380, min(contentSize.width, 480)), height: max(150, contentSize.height))
         panel.setContentSize(size)
         panel.contentMinSize = size
@@ -74,6 +96,7 @@ enum DialogPanelFactory {
     /// 弹窗关闭后还原现场：本 App 之前不在前台，就把主窗口的可见性恢复成原样并让出前台，
     /// 用户原来在用的 App 会回到最前，不会有「处理完弹窗主界面跳出来」的感觉。
     static func restoreAfterModal() {
+        isModalActive = false
         guard let prior = priorStates.popLast() else { return }
         if !prior.appWasActive {
             if let main = prior.mainWindow {
@@ -167,6 +190,12 @@ enum NoticeDialogPresenter {
     /// 返回被点击按钮的索引；关闭（Esc / 直接关窗）返回 nil。
     @discardableResult
     static func run(_ dialog: NoticeDialogView) -> Int? {
+        // 重入保护：已有弹窗在跑就不再叠一个。嵌套 runModal 会锁死事件循环，
+        // 症状是「弹窗出来了但点不动」，用户只能强杀进程。
+        guard !DialogPanelFactory.modalInFlight else {
+            FocusLogger.error("NoticeDialog suppressed — another modal is already up")
+            return nil
+        }
         let panel = DialogPanelFactory.makePanel()
 
         let state = PanelChoiceState()

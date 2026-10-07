@@ -5,7 +5,7 @@
 - 从 FocusGuard 的**完整 macOS 代码**改名而来（保留全部功能），不是新写的最小应用。
 - 改名已完成：target / bundle = `FocusPause` / `com.focuspause.app`；后台 helper = `com.focuspause.helper`（独立 Mach 服务名与路径，**不会与已安装的 FocusGuard helper 冲突**）。
 - 目录结构：`Sources/FocusPause`（主应用）、`Sources/FocusPauseHelper`（LaunchDaemon）、`Sources/FocusPauseHelperShared`（XPC 协议）。
-- 当前发布版本：`BundleResources/Info.plist` 为 **2.0 / build 17**。
+- 当前发布版本：`BundleResources/Info.plist` 为 **2.0.1 / build 18**。
 
 ## 已具备功能（继承自 FocusGuard，勿动屏蔽逻辑）
 
