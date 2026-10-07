@@ -14,7 +14,7 @@ class SettingsWindowController: NSWindowController {
             backing: .buffered,
             defer: true
         )
-        window.title = "FocusPause"
+        window.title = "Focus&Pause"
         // 参考 magpie 的窗口比例：略宽、偏横向，而不是正方形。
         window.minSize = NSSize(width: 680, height: 560)
         window.isReleasedWhenClosed = false
@@ -100,7 +100,7 @@ extension SettingsWindowController: NSWindowDelegate {
         NoticeDialogPresenter.run(NoticeDialogView(
             title: "将隐藏到菜单栏",
             icon: "pause.circle",
-            message: "关闭窗口后 FocusPause 仍在后台运行，屏蔽和专注计时不受影响。",
+            message: "关闭窗口后 Focus&Pause 仍在后台运行，屏蔽和专注计时不受影响。",
             highlights: ["需要再次打开时，点击菜单栏顶部的暂停图标即可。"],
             checkboxTitle: "下次不再提醒",
             onCheckboxChange: { suppress = $0 },

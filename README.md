@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-orange)]()
 
-FocusPause 是一款 macOS 专注力守护工具：在你需要专注时屏蔽网站、App 和网络，并提供休息、正念呼吸、五感着陆等“暂停一下”练习，减少冲动解锁和无效刷屏。
+Focus&Pause 是一款 macOS 专注力守护工具：在你需要专注时屏蔽网站、App 和网络，并提供休息、正念呼吸、五感着陆等“暂停一下”练习，减少冲动解锁和无效刷屏。
 
 > 适合考研党、远程工作者、写论文 / 写代码时容易被 B 站、微博、短视频打断的人。
 
@@ -27,7 +27,7 @@ FocusPause 是一款 macOS 专注力守护工具：在你需要专注时屏蔽�
 从 [GitHub Releases](https://github.com/xiaohe529/FocusPause/releases) 或 [Gitee Releases](https://gitee.com/xiaohe529/FocusPause/releases) 下载最新的 `FocusPause-v*.dmg`。
 
 1. 双击 DMG 文件。
-2. 在安装窗口中，把左侧的 **FocusPause** 拖到右侧的 **Applications** 文件夹。
+2. 在安装窗口中，把左侧的 **Focus&Pause** 拖到右侧的 **Applications** 文件夹（应用显示名为 Focus&Pause，文件名仍是 `FocusPause.app`）。
 3. 拖完后推出 DMG，打开 `/Applications/FocusPause.app`。
 4. 首次开启屏蔽时，按提示授权安装后台助手；之后屏蔽操作会静默执行。
 
@@ -77,7 +77,7 @@ helper 通过 LaunchDaemon 安装到系统目录，主 App 与 helper 使用 XPC
 
 ```bash
 ./build-app.sh release
-./make-release.sh 2.0.1
+./make-release.sh 2.0.2
 ```
 
 如需构建 DMG，可在 `.build/FocusPause.app` 就绪后执行：
@@ -86,7 +86,7 @@ helper 通过 LaunchDaemon 安装到系统目录，主 App 与 helper 使用 XPC
 create-dmg --volname "FocusPause" --background dmg-background.png \
   --window-size 660 400 --icon-size 128 \
   --icon "FocusPause.app" 165 200 --app-drop-link 495 200 \
-  --no-internet-enable FocusPause-v2.0.1.dmg .build/FocusPause.app
+  --no-internet-enable FocusPause-v2.0.2.dmg .build/FocusPause.app
 ```
 
 ## 安全与隐私
@@ -98,7 +98,7 @@ create-dmg --volname "FocusPause" --background dmg-background.png \
 
 ## License
 
-MIT © 2025 FocusPause Contributors
+MIT © 2025 Focus&Pause Contributors
 
 ---
 

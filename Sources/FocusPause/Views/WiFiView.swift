@@ -35,7 +35,7 @@ struct WiFiView: View {
                 icon: "wifi",
                 tint: .focusAccent,
                 subtitle: "网络拦截当前已开启",
-                message: "确认后 FocusPause 会立即恢复系统 DNS 设置。",
+                message: "确认后 Focus&Pause 会立即恢复系统 DNS 设置。",
                 confirmTitle: "恢复网络",
                 confirmTint: .focusAccent,
                 errorMessage: passwordError ? "密码错误，请重试" : nil,

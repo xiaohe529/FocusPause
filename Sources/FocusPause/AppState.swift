@@ -1707,7 +1707,7 @@ class AppState: ObservableObject {
             let choice = NoticeDialogPresenter.run(NoticeDialogView(
                 title: "需要一次性授权",
                 icon: "lock.shield",
-                message: "FocusPause 需要安装后台助手来静默更新屏蔽规则。",
+                message: "Focus&Pause 需要安装后台助手来静默更新屏蔽规则。",
                 highlights: [
                     "这只需授权一次，之后所有屏蔽操作都会在后台静默执行。",
                     "点击「好」后会弹出系统密码输入框。",

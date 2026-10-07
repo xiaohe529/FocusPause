@@ -49,7 +49,7 @@ private final class GoalOverlayPanel: NSPanel {
     private func showContextMenu(at event: NSEvent) {
         let menu = NSMenu()
 
-        let open = NSMenuItem(title: "打开 FocusPause", action: #selector(openMainWindow), keyEquivalent: "")
+        let open = NSMenuItem(title: "打开 Focus&Pause", action: #selector(openMainWindow), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
 

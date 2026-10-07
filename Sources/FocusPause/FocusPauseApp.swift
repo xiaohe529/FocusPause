@@ -30,7 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // macOS throttles a hidden app and its timers/icon can lag or appear gone.
         appNapActivity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiated, .idleSystemSleepDisabled],
-            reason: "FocusPause 屏蔽与专注计时保持运行"
+            reason: "Focus&Pause 屏蔽与专注计时保持运行"
         )
 
         installMainMenu()
@@ -127,9 +127,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem(title: "App", action: nil, keyEquivalent: "")
         appMenuItem.submenu = {
             let appMenu = NSMenu(title: "App")
-            appMenu.addItem(withTitle: "关于 FocusPause", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            appMenu.addItem(withTitle: "关于 Focus&Pause", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
             appMenu.addItem(NSMenuItem.separator())
-            appMenu.addItem(withTitle: "退出 FocusPause", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            appMenu.addItem(withTitle: "退出 Focus&Pause", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             return appMenu
         }()
         mainMenu.addItem(appMenuItem)

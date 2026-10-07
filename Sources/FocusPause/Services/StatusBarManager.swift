@@ -10,13 +10,13 @@ class StatusBarManager: NSObject {
     /// 菜单栏图标：直接用系统的 pause 符号（模板图，自动适配浅色/深色菜单栏）。
     private static func menuBarSymbol(filled: Bool) -> NSImage? {
         NSImage(systemSymbolName: filled ? "pause.circle.fill" : "pause.circle",
-                accessibilityDescription: "FocusPause")
+                accessibilityDescription: "Focus&Pause")
     }
 
     private func applyMenuBarIcon() {
         let active = (state?.blockingEnabled == true || state?.isProcessing == true)
         let img = Self.menuBarSymbol(filled: active)
-            ?? NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "FocusPause")
+            ?? NSImage(systemSymbolName: "pause.circle", accessibilityDescription: "Focus&Pause")
         img?.isTemplate = true
         statusItem?.button?.image = img
     }

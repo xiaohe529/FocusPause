@@ -120,7 +120,7 @@ func renderDMGBackground() -> NSBitmapImageRep {
     // ── 5. 底部提示 ──────────────────────────────────────────────────
     // 只留最要紧的一句。注意：Finder 会把背景图从标题栏下方开始铺，底部再被路径栏挡掉约 60pt，
     // 所以背景里 y≈340 以下其实看不见。这句必须落在图标名称（约 y≈298）之下、裁剪线之上。
-    _ = centerText("升级前请先退出正在运行的 FocusPause",
+    _ = centerText("升级前请先退出正在运行的 Focus&Pause",
                    font: systemFont(11, .regular), color: secondary,
                    centerX: pointW / 2, topY: 314)
 
