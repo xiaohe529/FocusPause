@@ -70,7 +70,7 @@ class StatusBarManager: NSObject {
         case (_, _, _, _, _, true):
             statusTitle = "屏蔽中"
         default:
-            statusTitle = "已停止"
+            statusTitle = "已解除"
         }
 
         let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
@@ -78,7 +78,7 @@ class StatusBarManager: NSObject {
         menu.addItem(statusItem)
         menu.addItem(.separator())
 
-        let toggleTitle = state?.blockingEnabled == true ? "停止屏蔽" : "开启屏蔽"
+        let toggleTitle = state?.blockingEnabled == true ? "解除屏蔽" : "开启屏蔽"
         let toggleItem = NSMenuItem(
             title: toggleTitle,
             action: #selector(toggleBlockingClicked),

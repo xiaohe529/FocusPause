@@ -23,7 +23,7 @@ struct AppListView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
-                        TextField("搜索或输入 App 名称，如「微信」「Chrome」", text: $searchQuery)
+                        TextField("搜索 App，如「微信」「Chrome」", text: $searchQuery)
                             .textFieldStyle(.plain)
                             .onSubmit { addFirstSearchResult() }
                         if !searchQuery.isEmpty {

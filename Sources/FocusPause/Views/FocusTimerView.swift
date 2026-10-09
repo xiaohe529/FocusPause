@@ -54,9 +54,8 @@ struct FocusTimerView: View {
                             focusConfigView
                         }
                     case .delayedBlock:
-                        if state.restActive {
-                            restRunningView
-                        } else if state.delayedBlockActive {
+                        // 休息属于「专注计时」页的事，不要漏到延时屏蔽页来。
+                        if state.delayedBlockActive {
                             delayedBlockRunningView
                         } else {
                             delayedBlockConfigView

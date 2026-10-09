@@ -252,7 +252,7 @@ class AppState: ObservableObject {
         presentNotice(
             "屏蔽名单已锁定",
             (ruleListLockedError() ?? "当前状态下无法修改屏蔽名单")
-                + "。名单只能增加，不能减少；需要改动请先停止屏蔽或结束计时。"
+                + "。名单只能增加，不能减少；需要改动请先解除屏蔽或结束计时。"
         )
     }
 
@@ -701,7 +701,7 @@ class AppState: ObservableObject {
     /// Opens the password sheet only if quota remains; otherwise explains the state.
     func requestEmergencyOverride() {
         guard emergencyUsesThisMonth < emergencyQuota else {
-            emergencyQuotaAlertMessage = "本月专注紧急退出次数已用完。请等待计时自然结束；如确属紧急，可先检查应急解锁是否可用。"
+            emergencyQuotaAlertMessage = "本月专注紧急退出次数已用完。请等待计时自然结束；如确属紧急，可到「设置 → 高级」点击「解锁」发起应急解锁。"
             showEmergencyQuotaAlert = true
             return
         }
@@ -711,7 +711,7 @@ class AppState: ObservableObject {
     /// Opens the password sheet only if quota remains; otherwise explains the state.
     func requestScheduledExit() {
         guard scheduledExitUsesThisMonth < scheduledExitQuota else {
-            emergencyQuotaAlertMessage = "本月定时屏蔽紧急退出次数已用完。请等待时间段结束；如确属紧急，可先检查应急解锁是否可用。"
+            emergencyQuotaAlertMessage = "本月定时屏蔽紧急退出次数已用完。请等待时间段结束；如确属紧急，可到「设置 → 高级」点击「解锁」发起应急解锁。"
             showEmergencyQuotaAlert = true
             return
         }
@@ -806,24 +806,54 @@ class AppState: ObservableObject {
         breakGlassCooldownEnd == nil
     }
 
-    /// 额度用完的硬锁中也允许从设置启用，否则会产生无法救援的死角。
-    var canEnableBreakGlassDuringLock: Bool {
-        !breakGlassEnabled &&
-        breakGlassHardLockQuotaExhausted &&
-        breakGlassCooldownEnd == nil &&
-        breakGlassLastAttemptDay != Self.currentDayString()
-    }
-
     /// Closing the feature is safe: it does not change any active lock.
     var canCloseBreakGlass: Bool {
         breakGlassEnabled && breakGlassCooldownEnd == nil
     }
 
     func canStartBreakGlassUnlock(at date: Date = Date()) -> Bool {
-        breakGlassEnabled &&
+        // 刻意不再要求 breakGlassEnabled：界面上只有「解锁」一个动作，
+        // 「启用」已经并进解锁流程，避免出现「先点启用、再点解锁」的两段式操作。
         breakGlassHardLockQuotaExhausted &&
         breakGlassCooldownEnd == nil &&
         breakGlassLastAttemptDay != Self.currentDayString(for: date)
+    }
+
+    /// 「解锁」按钮点下去时若不能进入解锁流程，返回面向用户的解释；返回 nil 表示可以解锁。
+    ///
+    /// 与 `canStartBreakGlassUnlock` 的区别：那个是纯布尔判断，只够决定按钮是否可点。
+    /// 这里要回答「为什么不行、差在哪」，所以按缺口分别给文案。判定顺序 = 用户能感知到的
+    /// 先后顺序：冷静期 → 今日已发起 → 额度还没用完 → 根本没在硬锁里。
+    func breakGlassUnlockBlockedReason(at date: Date = Date()) -> String? {
+        // 判「冷静期是否仍在倒计时」，而不是「是否曾开始过冷静期」：
+        // 冷静期自然走完后 `breakGlassCooldownEnd` 仍非 nil（只有放弃 / 完成才会清空），
+        // 用 `!= nil` 会让「已可确认解除」的状态继续显示「冷静期进行中」。
+        if breakGlassCooldownEnd != nil {
+            if isBreakGlassInCooldown(at: date) {
+                return "冷静期进行中。等倒计时结束后确认解除，或先放弃本次解锁再重来。"
+            }
+            // 倒计时已走完、只差最后确认。此时若往下走会撞上「今日已发起」而误报
+            // 「明天才能再次发起」，所以在这里直接给出正确的下一步。
+            return "冷静期已结束，点击「确认解除所有屏蔽」完成本次解锁。"
+        }
+        if breakGlassLastAttemptDay == Self.currentDayString(for: date) {
+            return "今日的解锁次数已用完，明天才能再次发起。"
+        }
+        if focusTimerActive {
+            let remaining = max(0, emergencyQuota - emergencyUsesThisMonth)
+            if remaining > 0 {
+                return "专注紧急退出额度还有 \(remaining) 次，先用完常规额度才会启用应急解锁。"
+            }
+            return nil
+        }
+        if isScheduledLockActive {
+            let remaining = max(0, scheduledExitQuota - scheduledExitUsesThisMonth)
+            if remaining > 0 {
+                return "定时屏蔽紧急退出额度还有 \(remaining) 次，先用完常规额度才会启用应急解锁。"
+            }
+            return nil
+        }
+        return "当前没有正在进行的专注计时或定时屏蔽，暂时用不到应急解锁。"
     }
 
     func isBreakGlassInCooldown(at date: Date = Date()) -> Bool {
@@ -838,8 +868,10 @@ class AppState: ObservableObject {
 
     func setBreakGlassEnabled(_ enabled: Bool) -> Bool {
         if enabled {
-            guard canConfigureBreakGlass || canEnableBreakGlassDuringLock else {
-                lastError = "应急解锁当前不可启用"
+            // 启用只能由成功的解锁流程完成（见 `startBreakGlassUnlock`）——
+            // 单独开放「启用」会重新引入「先启用、再解锁」的两段式操作。
+            guard canConfigureBreakGlass else {
+                lastError = "请直接点击「解锁」，启用会自动完成"
                 return false
             }
         } else {
@@ -858,7 +890,7 @@ class AppState: ObservableObject {
     @discardableResult
     func startBreakGlassUnlock(password: String, confirmationPhrase: String) -> Bool {
         guard canStartBreakGlassUnlock() else {
-            lastError = "应急解锁当前不可用"
+            lastError = breakGlassUnlockBlockedReason() ?? "应急解锁当前不可用"
             return false
         }
         guard helperInstalled, !helperNeedsRepair else {
@@ -872,6 +904,14 @@ class AppState: ObservableObject {
         guard KeychainPassword.verify(password) else {
             lastError = "密码错误"
             return false
+        }
+
+        // 解锁流程本身就等于「启用 + 发起」：一次成功即代表用户认可这套机制，
+        // 所以在这里落盘启用，不要再让用户回设置里点一次「启用」。
+        if !breakGlassEnabled {
+            breakGlassEnabled = true
+            settings.set(true, for: .breakGlassEnabled)
+            FocusLogger.info("Break-glass auto-enabled by successful unlock start")
         }
 
         let today = Self.currentDayString()
@@ -1814,7 +1854,7 @@ class AppState: ObservableObject {
             lastError = nil
         } catch {
             FocusLogger.error("disableBlocking failed: \(error.localizedDescription)")
-            lastError = "停止失败：\(error.localizedDescription)"
+            lastError = "解除失败：\(error.localizedDescription)"
             isProcessing = false
             onBlockingStateChanged?()
             return
@@ -1878,7 +1918,7 @@ class AppState: ObservableObject {
             let choice = NoticeDialogPresenter.run(NoticeDialogView(
                 title: "建议设置屏蔽密码",
                 icon: "key.fill",
-                message: "你还没有设置密码。没有密码的话，任何人点「停止屏蔽」都能直接关闭。",
+                message: "你还没有设置密码。没有密码的话，任何人点「解除屏蔽」都能直接关闭。",
                 highlights: [
                     "建议现在设置，给关闭屏蔽增加一点操作摩擦。",
                     "也可以稍后再说，先在「设置 → 密码」里补上。",
@@ -2446,7 +2486,7 @@ class AppState: ObservableObject {
         guard beginReminderModal() else { return }
         defer { endReminderModal() }
         let result = PromptPanelPresenter.run(PromptPanelConfig(
-            title: "屏蔽已停止",
+            title: "屏蔽已解除",
             icon: "clock",
             section1Title: "延时屏蔽",
             message: "想自由一会儿，又怕分心？设个延时，到点自动帮你把干扰挡回去。",

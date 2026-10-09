@@ -43,17 +43,73 @@ struct AppStateRuleTests {
     }
 
     @Test
-    func breakGlassCanBeConfiguredWhenIdleOrDuringExhaustedHardLock() {
+    func breakGlassUnlocksOnlyAfterTheRegularEmergencyQuotaIsExhausted() {
         let appState = AppState()
         appState.breakGlassEnabled = false
+        appState.focusTimerActive = false
+        appState.blockingEnabled = false
 
-        #expect(appState.canConfigureBreakGlass)
-        #expect(!appState.canEnableBreakGlassDuringLock)
+        // 空闲时没有硬锁可解，应给出「用不到」的说明而不是直接放行。
+        #expect(appState.breakGlassUnlockBlockedReason() != nil)
 
+        // 专注计时中，常规额度还有剩 → 必须先走常规紧急退出。
+        appState.emergencyQuota = 3
+        appState.emergencyUsesThisMonth = 1
         appState.focusTimerActive = true
+        #expect(appState.breakGlassUnlockBlockedReason()?.contains("还有 2 次") == true)
+        #expect(!appState.canStartBreakGlassUnlock())
+
+        // 常规额度用尽 → 解锁条件成立，即使特性此前未启用也能直接解锁。
         appState.emergencyUsesThisMonth = appState.emergencyQuota
-        #expect(!appState.canConfigureBreakGlass)
-        #expect(appState.canEnableBreakGlassDuringLock)
+        #expect(appState.breakGlassUnlockBlockedReason() == nil)
+        #expect(appState.canStartBreakGlassUnlock())
+    }
+
+    @Test
+    func breakGlassUnlockIsBlockedOnceUsedToday() {
+        let appState = AppState()
+        appState.focusTimerActive = true
+        appState.emergencyQuota = 1
+        appState.emergencyUsesThisMonth = 1
+
+        #expect(appState.breakGlassUnlockBlockedReason() == nil)
+
+        // 今天已经发起过一次 → 再点解锁必须被拒绝，并说明是「今日已用完」。
+        let today = {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: Date())
+        }()
+        appState.breakGlassLastAttemptDay = today
+
+        #expect(appState.breakGlassUnlockBlockedReason()?.contains("今日") == true)
+        #expect(!appState.canStartBreakGlassUnlock())
+    }
+
+    /// 回归测试：`breakGlassCooldownEnd` 在冷静期自然走完后**不会**被清空
+    /// （只有放弃 / 完成才清空）。所以「冷静期进行中」必须按时间判断，
+    /// 否则倒计时结束后仍会显示「冷静期进行中」，并和「确认解除所有屏蔽」按钮同时出现。
+    @Test
+    func breakGlassCooldownExpiryReportsConfirmStepNotInProgress() {
+        let appState = AppState()
+        appState.focusTimerActive = true
+        appState.emergencyQuota = 1
+        appState.emergencyUsesThisMonth = 1
+
+        let now = Date()
+
+        // 冷静期还剩 1 分钟 → 提示「进行中」。
+        appState.breakGlassCooldownEnd = now.addingTimeInterval(60)
+        #expect(appState.breakGlassUnlockBlockedReason(at: now)?.contains("冷静期进行中") == true)
+        #expect(!appState.isBreakGlassReadyToComplete(at: now))
+
+        // 冷静期已过期但未确认 → 不能再报「进行中」，也不能误报「今日次数已用完」。
+        appState.breakGlassCooldownEnd = now.addingTimeInterval(-1)
+        let reason = appState.breakGlassUnlockBlockedReason(at: now)
+        #expect(reason?.contains("冷静期进行中") == false)
+        #expect(reason?.contains("今日") == false)
+        #expect(reason?.contains("确认解除所有屏蔽") == true)
+        #expect(appState.isBreakGlassReadyToComplete(at: now))
     }
 }
 

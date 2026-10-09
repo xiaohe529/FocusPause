@@ -83,7 +83,7 @@ struct MainView: View {
 
                 if state.blockingEnabled && !state.hasPassword {
                     InfoBanner(style: .warning, icon: "key.fill", actionTitle: "设置", contentFont: .caption) {
-                        Text("未设置屏蔽密码，停止屏蔽无需验证。建议设置，为冲动解除增加一道门槛。")
+                        Text("未设置屏蔽密码，解除屏蔽无需验证。建议设置，为冲动解除增加一道门槛。")
                     } action: { state.showSettingsSheet = true }
                 }
 
@@ -338,7 +338,7 @@ struct MainView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                Text(state.blockingEnabled ? "屏蔽中" : "已停止")
+                Text(state.blockingEnabled ? "屏蔽中" : "已解除")
                     .font(.subheadline)
             }
 
@@ -376,11 +376,11 @@ struct MainView: View {
     /// 延时屏蔽倒计时期间，主按钮变为「立即屏蔽」。
     private var controlButtonTitle: String {
         if state.delayedBlockActive { return "立即屏蔽" }
-        return state.blockingEnabled ? "停止屏蔽" : "开启屏蔽"
+        return state.blockingEnabled ? "解除屏蔽" : "开启屏蔽"
     }
 
     private var controlButtonColor: Color {
-        // 「立即屏蔽」是紧急动作 → 砖红；「开启 / 停止屏蔽」都是常规操作 → 主题色。
+        // 「立即屏蔽」是紧急动作 → 砖红；「开启 / 解除屏蔽」都是常规操作 → 主题色。
         if state.delayedBlockActive { return .focusDanger }
         return .focusAccent
     }

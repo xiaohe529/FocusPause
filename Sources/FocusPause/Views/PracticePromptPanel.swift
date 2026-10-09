@@ -189,7 +189,8 @@ struct PracticePromptPanel: View {
                 if config.showModePicker {
                     MiniSegmented(
                         options: [(false, "倒计时"), (true, "正计时")],
-                        selection: $elapsedMode
+                        selection: $elapsedMode,
+                        selectedStyle: .filled
                     )
                     .frame(maxWidth: 220)
                 }

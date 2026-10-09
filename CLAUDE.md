@@ -5,7 +5,7 @@
 - 从 FocusGuard 的**完整 macOS 代码**改名而来（保留全部功能），不是新写的最小应用。
 - 改名已完成：target / bundle = `FocusPause` / `com.focuspause.app`；后台 helper = `com.focuspause.helper`（独立 Mach 服务名与路径，**不会与已安装的 FocusGuard helper 冲突**）。
 - 目录结构：`Sources/FocusPause`（主应用）、`Sources/FocusPauseHelper`（LaunchDaemon）、`Sources/FocusPauseHelperShared`（XPC 协议）。
-- 当前发布版本：`BundleResources/Info.plist` 为 **2.0.2 / build 19**。
+- 当前发布版本：`BundleResources/Info.plist` 为 **2.0.4 / build 21**。
 
 ## 已具备功能（继承自 FocusGuard，勿动屏蔽逻辑）
 
@@ -40,7 +40,7 @@ create-dmg --volname "FocusPause" --background dmg-background.png \
 - `Views/DesignSystem.swift` 是唯一入口：
   - `Color.focusAccent`：当前**强调色主题**（默认暖赭，见 `AccentTheme`）。用于正向主动作、
     一级导航当前分区、二级导航选中态 / 下划线、链接、运行中图标。
-  - `Color.focusDanger`：砖红。**只用于破坏性 / 紧急动作**——停止屏蔽、拦截、紧急退出、
+  - `Color.focusDanger`：砖红。**只用于破坏性 / 紧急动作**——解除屏蔽、拦截、紧急退出、
     结束正计时、删除密码、应急解锁。始终配白字。
   - `Color.focusInk`：墨色，用于中性的高强调元素、开关填充。
   - `surfaceCanvas` / `surfaceCard` / `surfaceWell` / `surfaceHairline` / `surfaceDivider` / `accentFg`。
@@ -48,11 +48,14 @@ create-dmg --volname "FocusPause" --background dmg-background.png \
 - **三层导航刻意用三种不同样式，避免「两级一样」的重复感**：
   - 一级：标题栏里、**强调色实心胶囊**（最重要），居中，间距最疏。
   - 二级：**下划线文字**（无轨道、无填充），居中；与一级同一竖直中轴。
-  - 卡片内模式切换：`MiniSegmented`（灰轨道 + 白胶囊）或 `SubSegmentCard(.plain)`，居中。
+  - 卡片内模式切换：`MiniSegmented`（灰轨道 + 白胶囊，默认）或 `SubSegmentCard(.plain)`，居中。
+    弹窗内的关键二选一（如「倒计时 / 正计时」）可传 `selectedStyle: .filled` 换成强调色实心，
+    否则白胶囊在弹窗里几乎看不出选中。
 - **标题栏**（`TitlebarTabs.swift` + `SettingsWindowController.installTitlebarTabs`）：
   只放两样——**应用名靠左**（红绿灯之后）+ **设置齿轮靠右**，与红绿灯同一水平线。
   一级导航在**窗口内容区**（`MainView.primaryTabs`，居中、间距 20）。
-- **设置 → 外观**：主题（跟随系统 / 浅色 / 深色）+ 强调色四选一，持久化在 `AppSettingsStore`
+- **设置 → 外观**：主题（跟随系统 / 浅色 / 深色）+ 强调色（暖赭 / 陶土 / 青碧 / 苔绿 /
+  靛蓝 / 紫棠 / 石墨，七选一），持久化在 `AppSettingsStore`
   （key `accentTheme` / `appearanceTheme`），改完立即生效。
 - 开关统一用 `AlwaysActiveSwitchStyle`（30×17，开启＝强调色 / 关闭＝中性灰），别用原生 `.switch`。
 - 圆角：控件 8 / 卡片 12 / 弹窗 14；窗口 720×620，最小 680×560。

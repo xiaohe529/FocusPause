@@ -49,16 +49,26 @@ enum AppearanceTheme: String, CaseIterable, Identifiable {
 }
 
 /// 可选的强调色主题（设置里可切换）。默认暖赭。
+///
+/// 选色约束（改色时请一并复核）：
+/// - 每个浅色档配白字的对比度 ≥ 4.5，深色档配近黑字的对比度 ≥ 4.5；
+/// - 任意两个强调色的 **浅色档** 之间 ΔE ≥ 25，避免设置里出现「看不出区别的两颗色点」；
+/// - 每个强调色与 `focusDanger` 的 ΔE ≥ 25。**这条最容易被破坏**：暖色系一旦偏红
+///   （陶土最初是 #B44F3B，与砖红 ΔE 仅 13）就会和危险色混成一片，用户以为
+///   「主按钮是危险按钮」。
 enum AccentTheme: String, CaseIterable, Identifiable {
-    case ochre, clay, moss, indigo
+    case ochre, clay, teal, moss, indigo, plum, graphite
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .ochre:  return "暖赭"
         case .clay:   return "陶土"
+        case .teal:   return "青碧"
         case .moss:   return "苔绿"
         case .indigo: return "靛蓝"
+        case .plum:   return "紫棠"
+        case .graphite: return "石墨"
         }
     }
 
@@ -66,17 +76,28 @@ enum AccentTheme: String, CaseIterable, Identifiable {
     var colors: (light: Color, dark: Color) {
         switch self {
         case .ochre:
-            return (Color(red: 0.706, green: 0.388, blue: 0.122),
-                    Color(red: 0.890, green: 0.635, blue: 0.392))
+            return (Color(red: 0.647, green: 0.353, blue: 0.110),   // #A55A1C
+                    Color(red: 0.902, green: 0.651, blue: 0.408))   // #E6A668
         case .clay:
-            return (Color(red: 0.706, green: 0.310, blue: 0.231),
-                    Color(red: 0.914, green: 0.557, blue: 0.482))
+            // 去红往棕：原 #B44F3B 与当时的砖红 #BE3A31 几乎同色（ΔE 13），
+            // 改成赭褐 #8C5F4B 后与新的 danger #AC342E 拉开到 ΔE 35。
+            return (Color(red: 0.549, green: 0.373, blue: 0.294),   // #8C5F4B
+                    Color(red: 0.839, green: 0.596, blue: 0.463))   // #D69876
+        case .teal:
+            return (Color(red: 0.133, green: 0.455, blue: 0.467),   // #227477
+                    Color(red: 0.435, green: 0.714, blue: 0.725))   // #6FB6B9
         case .moss:
-            return (Color(red: 0.290, green: 0.435, blue: 0.255),
-                    Color(red: 0.588, green: 0.729, blue: 0.518))
+            return (Color(red: 0.290, green: 0.435, blue: 0.255),   // #4A6F41
+                    Color(red: 0.588, green: 0.729, blue: 0.518))   // #96BA84
         case .indigo:
-            return (Color(red: 0.286, green: 0.314, blue: 0.667),
-                    Color(red: 0.635, green: 0.663, blue: 0.949))
+            return (Color(red: 0.286, green: 0.314, blue: 0.667),   // #4950AA
+                    Color(red: 0.635, green: 0.663, blue: 0.949))   // #A2A9F2
+        case .plum:
+            return (Color(red: 0.482, green: 0.290, blue: 0.510),   // #7B4A82
+                    Color(red: 0.745, green: 0.576, blue: 0.769))   // #BE93C4
+        case .graphite:
+            return (Color(red: 0.306, green: 0.306, blue: 0.345),   // #4E4E58
+                    Color(red: 0.659, green: 0.659, blue: 0.706))   // #A8A8B4
         }
     }
 }
@@ -94,11 +115,12 @@ extension Color {
         return Color(light: c.light, dark: c.dark)
     }
 
-    /// 危险色：停止屏蔽 / 拦截 / 紧急退出这类「破坏性 / 需要三思」的动作。
+    /// 危险色：解除屏蔽 / 拦截 / 紧急退出这类「破坏性 / 需要三思」的动作。
     /// 用克制的砖红（不是纯红），和墨、灰搭得住；始终配白字。
+    /// 与所有强调色的 ΔE 都 ≥ 25（见 `AccentTheme` 的选色约束）。
     static let focusDanger = Color(
-        light: Color(red: 0.745, green: 0.227, blue: 0.192),   // #BE3A31
-        dark:  Color(red: 0.824, green: 0.329, blue: 0.290)    // #D2544A
+        light: Color(red: 0.675, green: 0.204, blue: 0.180),   // #AC342E
+        dark:  Color(red: 0.776, green: 0.290, blue: 0.259)    // #C64A42
     )
 
     /// 高强调墨色：停止 / 确认退出这类要有分量、但不抢暖色的动作。随明暗翻转为近白。
@@ -317,7 +339,7 @@ struct DialogHeader: View {
 /// 弹窗外壳：白卡 + 1px 描边，内容与底部按钮条作为**兄弟节点**垂直排列。
 ///
 /// 关键：按钮条必须参与布局（不能挂在 `.overlay` 上）。挂在 overlay 时内容区不会为它
-/// 让位，按钮会直接压在正文上——这正是之前「停止屏蔽 / 结束休息」等弹窗布局错乱的原因。
+/// 让位，按钮会直接压在正文上——这正是之前「解除屏蔽 / 结束休息」等弹窗布局错乱的原因。
 struct DialogShell<Content: View, Secondary: View, Primary: View>: View {
     var width: CGFloat
     @ViewBuilder var content: () -> Content
@@ -388,7 +410,7 @@ struct CooldownDialogView: View {
                 .frame(maxWidth: .infinity)
             }
 
-            Text("冷静期结束后才能停止屏蔽；如果已经想清楚了，可以等到时间走完再操作。")
+            Text("冷静期结束后才能解除屏蔽；如果已经想清楚了，可以等到时间走完再操作。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -544,7 +566,7 @@ struct SetupChecklistView: View {
             SectionCard(
                 title: "快速开始",
                 icon: "checklist",
-                subtitle: "三步即可开始专注。完成后不会再因为停止屏蔽而重新出现。",
+                subtitle: "三步即可开始专注。完成后不会再因为解除屏蔽而重新出现。",
                 spacing: 10
             ) {
                 step(
@@ -559,7 +581,7 @@ struct SetupChecklistView: View {
                 step(
                     done: state.hasPassword,
                     title: "设置屏蔽密码",
-                    detail: "为停止屏蔽和紧急退出增加一道冷静门槛。",
+                    detail: "为解除屏蔽和紧急退出增加一道冷静门槛。",
                     actionTitle: state.hasPassword ? nil : "去设置"
                 ) {
                     state.showSettingsSheet = true
@@ -804,9 +826,21 @@ struct RowActionButtons: View {
 
 /// 极简分段控件：只带文字，灰轨道 + 白色选中胶囊（与导航同一套语言）。
 /// 用来替换原生 `.segmented` 选择器——后者在墨色 tint 下会变成一整块黑，很重。
+///
+/// 选中态有两档：
+/// - `.capsule`（默认）：灰轨道 + 白胶囊。**这是全局约定**（见 CLAUDE.md 的设计系统一节），
+///   设置页、工具箱、定时屏蔽时段等位置都依赖它，不要改默认值。
+/// - `.filled`：强调色实心。用于弹窗内的少数关键二选一（例如「倒计时 / 正计时」）——
+///   弹窗里白胶囊压在浅灰轨道上几乎看不出选中，二选一必须一眼可辨。
 struct MiniSegmented<T: Hashable>: View {
+    enum SelectedStyle {
+        case capsule
+        case filled
+    }
+
     let options: [(value: T, label: String)]
     @Binding var selection: T
+    var selectedStyle: SelectedStyle = .capsule
 
     var body: some View {
         HStack(spacing: 2) {
@@ -821,15 +855,15 @@ struct MiniSegmented<T: Hashable>: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 5)
                         .frame(maxWidth: .infinity)
-                        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                        .foregroundStyle(foregroundColor(isSelected: isSelected))
                         .background(
-                            isSelected ? Color.surfaceCard : Color.clear,
+                            backgroundColor(isSelected: isSelected),
                             in: RoundedRectangle(cornerRadius: 7, style: .continuous)
                         )
-                        .overlay(
+                        .overlay {
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .strokeBorder(isSelected ? Color.surfaceHairline : Color.clear, lineWidth: 1)
-                        )
+                                .strokeBorder(borderColor(isSelected: isSelected), lineWidth: 1)
+                        }
                         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.plain)
@@ -837,6 +871,23 @@ struct MiniSegmented<T: Hashable>: View {
         }
         .padding(3)
         .background(Color.surfaceWell, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func foregroundColor(isSelected: Bool) -> Color {
+        switch selectedStyle {
+        case .capsule: return isSelected ? Color.primary : Color.secondary
+        case .filled:  return isSelected ? Color.accentFg : Color.secondary
+        }
+    }
+
+    private func backgroundColor(isSelected: Bool) -> Color {
+        guard isSelected else { return Color.clear }
+        return selectedStyle == .filled ? Color.focusAccent : Color.surfaceCard
+    }
+
+    private func borderColor(isSelected: Bool) -> Color {
+        guard isSelected, selectedStyle == .capsule else { return Color.clear }
+        return Color.surfaceHairline
     }
 }
 

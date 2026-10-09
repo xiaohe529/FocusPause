@@ -28,7 +28,6 @@ struct SettingsView: View {
     @State private var focusQuotaDraft: Int?
     @State private var scheduledQuotaDraft: Int?
     @State private var showBreakGlassSetup = false
-    @State private var breakGlassSetupDisabling = false
     @State private var showBreakGlassUnlock = false
     @State private var showBreakGlassCancel = false
     @State private var recoveryInput1 = ""
@@ -72,19 +71,15 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .tint(Color.focusAccent)
-        .sheet(isPresented: $showBreakGlassSetup, onDismiss: {
-            breakGlassSetupDisabling = false
-        }) {
+        .sheet(isPresented: $showBreakGlassSetup) {
             BreakGlassDialogView(
-                title: state.breakGlassEnabled ? "关闭应急解锁" : "启用应急解锁",
+                title: "关闭应急解锁",
                 icon: "lock.open.rotation",
-                message: state.breakGlassEnabled
-                    ? "关闭后，紧急退出次数用完时将没有备用解锁方式。当前屏蔽和计时不会改变。"
-                    : "仅用于紧急退出次数用完后的真实紧急情况。发起解锁时仍需输入密码，并等待 5 分钟冷静期。",
+                message: "关闭后，紧急退出次数用完时将没有备用解锁方式。当前屏蔽和计时不会改变，之后仍可随时重新解锁。",
                 requiresPassword: false,
-                submitTitle: state.breakGlassEnabled ? "确认关闭" : "确认启用"
+                submitTitle: "确认关闭"
             ) { _, _ in
-                let succeeded = state.setBreakGlassEnabled(!state.breakGlassEnabled)
+                let succeeded = state.setBreakGlassEnabled(false)
                 return succeeded ? nil : (state.lastError ?? "无法更改应急解锁设置")
             }
         }
@@ -163,16 +158,17 @@ struct SettingsView: View {
 
                 Divider()
 
-                // 强调色：四选一
+                // 强调色：多选一。色点数量增加后用 FlowLayout，窗口收窄时自动折行，
+                // 不用 HStack + Spacer 硬挤（那会把色点压到窗口外）。
                 VStack(alignment: .leading, spacing: 8) {
                     Text("强调色")
                         .font(.subheadline)
-                    HStack(spacing: 16) {
+                    FlowLayout(spacing: 16) {
                         ForEach(AccentTheme.allCases) { theme in
                             accentSwatch(theme)
                         }
-                        Spacer()
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Text("用在主按钮、当前分区、选中项上。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -528,7 +524,7 @@ struct SettingsView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
-                Text("设置密码后，停止屏蔽需验证密码，为冲动解除增加一道门槛。")
+                Text("设置密码后，解除屏蔽需验证密码，为冲动解除增加一道门槛。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -596,7 +592,7 @@ struct SettingsView: View {
 
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("删除密码后，停止屏蔽将不再需要验证。请输入恢复码 `123456789` 两次以确认删除。")
+                        Text("删除密码后，解除屏蔽将不再需要验证。请输入恢复码 `123456789` 两次以确认删除。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -647,20 +643,37 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("应急解锁")
                         .font(.subheadline)
-                    Text(state.breakGlassEnabled ? "已启用" : "未启用")
+                    // 只有真的用过一次才显示「已启用」；否则一律提示还差什么才能解锁。
+                    Text(state.breakGlassEnabled ? "已启用" : "常规额度用尽后可解锁")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                Button(state.breakGlassEnabled ? "关闭" : "启用") {
-                    breakGlassSetupDisabling = state.breakGlassEnabled
-                    showBreakGlassSetup = true
+                // 只有一个「解锁」动作：满足条件时点开密码 + 确认语句弹窗，成功即自动启用。
+                // 不满足条件时不 disable（那样点了毫无反馈），而是换成中性样式看上去是灰的，
+                // 点下去用弹窗说明还差什么。
+                if canUnlockBreakGlass {
+                    Button("解锁") { requestBreakGlassUnlock() }
+                        .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
+                        .help("输入密码和确认语句，进入 5 分钟冷静期")
+                } else {
+                    // 视觉上「灰掉」，但仍可点击——点了会说明还差什么条件。
+                    Button("解锁") { requestBreakGlassUnlock() }
+                        .buttonStyle(AlwaysActiveTintedButtonStyle())
+                        .opacity(0.55)
+                        .help(unlockBlockedReason ?? "")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(state.breakGlassEnabled ? !state.canCloseBreakGlass : !(state.canConfigureBreakGlass || state.canEnableBreakGlassDuringLock))
+
+                if state.breakGlassEnabled {
+                    Button("关闭") {
+                        showBreakGlassSetup = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!state.canCloseBreakGlass)
+                }
             }
 
             if let day = state.breakGlassLastAttemptDay {
@@ -669,14 +682,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if state.breakGlassEnabled && state.canStartBreakGlassUnlock() {
-                Button {
-                    showBreakGlassUnlock = true
-                } label: {
-                    Label("发起应急解锁", systemImage: "lock.open.rotation")
-                }
-                .buttonStyle(AlwaysActiveButtonStyle(color: .focusDanger))
-            } else if let cooldownEnd = state.breakGlassCooldownEnd {
+            // 条件不满足时把原因直接写出来，而不是只把按钮变灰（否则用户只能猜）。
+            if let reason = unlockBlockedReason {
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let cooldownEnd = state.breakGlassCooldownEnd {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     VStack(alignment: .leading, spacing: 6) {
                         if state.isBreakGlassReadyToComplete(at: context.date) {
@@ -704,12 +718,30 @@ struct SettingsView: View {
                 }
             }
 
-            Text("最后的备用解锁方式：满足条件后点击“应急解锁”，输入确认语句和密码进入 5 分钟冷静期；冷静期内可放弃并保持屏蔽，结束后才确认解除所有屏蔽。每天最多发起 1 次。屏蔽进行中也可以从这里启用。")
+            Text("最后的备用解锁方式：常规紧急退出额度用完后，「解锁」才会亮起。点击后输入确认语句和密码，进入 5 分钟冷静期；冷静期内可放弃并保持屏蔽，结束后才确认解除所有屏蔽。每天最多发起 1 次。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .focusCard()
+    }
+
+    /// 当前是否满足解锁条件（决定「解锁」按钮是危险色实心还是中性灰）。
+    private var canUnlockBreakGlass: Bool {
+        state.canStartBreakGlassUnlock()
+    }
+
+    /// 不满足条件时的具体原因；满足条件时为 nil。
+    private var unlockBlockedReason: String? {
+        return state.breakGlassUnlockBlockedReason()
+    }
+
+    private func requestBreakGlassUnlock() {
+        if let reason = unlockBlockedReason {
+            state.presentNotice("暂时无法解锁", reason)
+        } else {
+            showBreakGlassUnlock = true
+        }
     }
 
     // MARK: - 软件更新
@@ -803,8 +835,8 @@ struct SettingsView: View {
                 icon: "key.fill",
                 tint: .focusAccent,
                 subtitle: state.hasPassword
-                    ? "需要先输入旧密码；新密码用于停止屏蔽与紧急退出。"
-                    : "设置后，停止屏蔽需验证密码。"
+                    ? "需要先输入旧密码；新密码用于解除屏蔽与紧急退出。"
+                    : "设置后，解除屏蔽需验证密码。"
             )
 
             VStack(alignment: .leading, spacing: 10) {

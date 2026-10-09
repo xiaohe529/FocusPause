@@ -11,7 +11,7 @@ enum DialogPanelFactory {
         /// 主窗口在弹窗出现前是否可见；为 nil 表示当时没有主窗口。
         let mainWindow: NSWindow?
     }
-    /// 栈而非单个值：一个弹窗里可能再弹一个（如「停止屏蔽被锁」→ 提示后仍要输密码），
+    /// 栈而非单个值：一个弹窗里可能再弹一个（如「解除屏蔽被锁」→ 提示后仍要输密码），
     /// 单个变量会被内层弹窗覆盖，外层关闭时就会把现场还原错。
     private static var priorStates: [PriorState] = []
 
